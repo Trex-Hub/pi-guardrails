@@ -14,6 +14,8 @@ type ConfirmResult = (typeof COMMAND_OPTIONS)[number]["result"];
 export function commandPark(params: {
   events: ExtensionAPI["events"];
   id: string;
+  toolCallId: string;
+  parentToolCallId?: string;
   toolName: string;
   command: string;
   reason: string;
@@ -34,6 +36,10 @@ export function commandPark(params: {
       kind: "guardrails.command",
       title: `Dangerous command: ${params.reason}`,
       view: {
+        toolCallId: params.toolCallId,
+        ...(params.parentToolCallId !== undefined
+          ? { parentToolCallId: params.parentToolCallId }
+          : {}),
         toolName: params.toolName,
         command: params.command,
         reason: params.reason,

@@ -33,6 +33,7 @@ function setup(
   const park = pathPark({
     events,
     id: "id",
+    toolCallId: "test-call",
     toolName: "bash",
     path: "/outside/a",
     displayPath: "/outside/a",

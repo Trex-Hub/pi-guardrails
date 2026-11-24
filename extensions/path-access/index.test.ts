@@ -226,6 +226,51 @@ describe("pathAccess extension hook", () => {
     ]);
   });
 
+  it.each([undefined, "parent"])(
+    "includes correlation IDs with parent %s",
+    async (parentToolCallId) => {
+      const pi = createMock<ExtensionAPI>();
+      let request: PiLiveRequest | undefined;
+      pi.events.emit.mockImplementation((name, data) => {
+        if (name === "pi-live:park") request = data as PiLiveRequest;
+      });
+      const ctx = createMock<ExtensionContext>({
+        cwd: "/workspace",
+        hasUI: true,
+        signal: new AbortController().signal,
+      });
+      ctx.ui.custom.mockImplementation(
+        async (factory) =>
+          new Promise<unknown>((resolve) => {
+            factory(createMock(), createMock(), createMock(), resolve);
+            assert(request);
+            request.answer(
+              { result: "allow-file-once" },
+              { connId: "1", name: "test" },
+            );
+          }),
+      );
+      await pathAccess(pi);
+      const handler = registeredExtensionHandler(pi, "tool_call");
+      assert(typeof handler === "function");
+      await handler(
+        {
+          ...toolCall,
+          toolCallId: "parent/1",
+          ...(parentToolCallId !== undefined ? { parentToolCallId } : {}),
+        },
+        ctx,
+      );
+      expect(request?.view).toMatchObject({ toolCallId: "parent/1" });
+      if (parentToolCallId !== undefined)
+        expect(request?.view).toHaveProperty(
+          "parentToolCallId",
+          parentToolCallId,
+        );
+      else expect(request?.view).not.toHaveProperty("parentToolCallId");
+    },
+  );
+
   it("parks the raw PowerShell command", async () => {
     const pi = createMock<ExtensionAPI>();
     let request: PiLiveRequest | undefined;

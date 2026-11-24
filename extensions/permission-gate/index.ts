@@ -159,6 +159,8 @@ export default async function permissionGate(pi: ExtensionAPI) {
     const parked = commandPark({
       events: pi.events,
       id: promptOpened.prompt.id,
+      toolCallId: event.toolCallId,
+      parentToolCallId: event.parentToolCallId,
       toolName,
       command,
       reason: safety.reason,

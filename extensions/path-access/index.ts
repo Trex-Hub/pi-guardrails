@@ -213,6 +213,8 @@ export default async function pathAccess(pi: ExtensionAPI) {
       const parked = pathPark({
         events: pi.events,
         id: promptOpened.prompt.id,
+        toolCallId: event.toolCallId,
+        parentToolCallId: event.parentToolCallId,
         toolName: event.toolName,
         path: absolutePath,
         displayPath: safety.metadata.displayPath,

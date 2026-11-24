@@ -15,6 +15,8 @@ const SAVED_TO: Record<PathAccessAlwaysScope, "project" | "global"> = {
 export function pathPark(params: {
   events: ExtensionAPI["events"];
   id: string;
+  toolCallId: string;
+  parentToolCallId?: string;
   toolName: string;
   path: string;
   displayPath: string;
@@ -49,6 +51,10 @@ export function pathPark(params: {
       kind: "guardrails.path",
       title: `Outside workspace: ${params.displayPath}`,
       view: {
+        toolCallId: params.toolCallId,
+        ...(params.parentToolCallId !== undefined
+          ? { parentToolCallId: params.parentToolCallId }
+          : {}),
         toolName: params.toolName,
         path: params.path,
         displayPath: params.displayPath,

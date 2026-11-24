@@ -12,6 +12,8 @@ Items use protocol `1`, owner `guardrails`, and the same `id` as the correspondi
 { "result": "allow" }
 ```
 
+Each view carries the originating `toolCallId`; `parentToolCallId` is present when the call was made by another tool, allowing clients to correlate nested calls with their parent transcript row.
+
 The result must be one of the item's offered, enabled options. A valid client answer ends the prompt and has the same effect as the corresponding keyboard choice, including session or persistent grants and stopping the turn. Client answers bypass the terminal input guard.
 
 Invalid answers leave the item open and return one of these exact reasons:
@@ -29,6 +31,8 @@ The title is `Dangerous command: <reason>`. The JSON view is:
 
 ```ts
 {
+  toolCallId: string;
+  parentToolCallId?: string;
   toolName: string; // bash or powershell
   command: string;  // raw command, unchanged and untruncated
   reason: string;
@@ -44,6 +48,8 @@ The title is `Outside workspace: <displayPath>`. The JSON view is:
 
 ```ts
 {
+  toolCallId: string;
+  parentToolCallId?: string;
   toolName: string;
   path: string;        // absolute target
   displayPath: string; // as shown in the terminal

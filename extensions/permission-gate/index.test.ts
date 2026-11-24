@@ -210,6 +210,41 @@ describe("permissionGate extension hook", () => {
     expect(close).toHaveBeenCalledExactlyOnceWith({ by: "keyboard" });
   });
 
+  it.each([undefined, "parent"])(
+    "includes correlation IDs with parent %s",
+    async (parentToolCallId) => {
+      assert(toolCallHandler);
+      let request: PiLiveRequest | undefined;
+      pi.events.emit.mockImplementation((event, data) => {
+        if (event === "pi-live:park") request = data as PiLiveRequest;
+      });
+      const ctx = createCtx({ signal: new AbortController().signal });
+      vi.mocked(ctx.ui.custom).mockImplementation(
+        async (factory) =>
+          new Promise<unknown>((resolve) => {
+            factory(createMock(), createMock(), createMock(), resolve);
+            assert(request);
+            request.answer({ result: "deny" }, { connId: "1", name: "test" });
+          }),
+      );
+      await toolCallHandler(
+        {
+          ...DANGEROUS_EVENT,
+          toolCallId: "parent/1",
+          ...(parentToolCallId !== undefined ? { parentToolCallId } : {}),
+        },
+        ctx,
+      );
+      expect(request?.view).toMatchObject({ toolCallId: "parent/1" });
+      if (parentToolCallId !== undefined)
+        expect(request?.view).toHaveProperty(
+          "parentToolCallId",
+          parentToolCallId,
+        );
+      else expect(request?.view).not.toHaveProperty("parentToolCallId");
+    },
+  );
+
   it("ends the custom prompt on abort", async () => {
     assert(toolCallHandler);
     const controller = new AbortController();
