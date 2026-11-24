@@ -1,17 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { PathAccessAlwaysScope } from "../../src/shared/config/types";
 import { parkPrompt } from "../../src/shared/pi-live";
-
-const SAVED_TO: Record<PathAccessAlwaysScope, "project" | "global"> = {
-  local: "project",
-  global: "global",
-};
-
 import {
   type createPathAccessPromptComponent,
   type PromptResult,
   promptOptions,
 } from "./prompt";
+
+const SAVED_TO: Record<PathAccessAlwaysScope, "project" | "global"> = {
+  local: "project",
+  global: "global",
+};
 
 export function pathPark(params: {
   events: ExtensionAPI["events"];
@@ -56,9 +55,7 @@ export function pathPark(params: {
         directory: params.directory,
         cwd: params.cwd,
         target: params.showFileOptions ? "file" : "directory",
-        ...(params.toolName === "bash" && params.command !== undefined
-          ? { command: params.command }
-          : {}),
+        ...(params.command !== undefined ? { command: params.command } : {}),
         reason: params.reason,
         alwaysSavedTo: SAVED_TO[params.alwaysScope],
         options,

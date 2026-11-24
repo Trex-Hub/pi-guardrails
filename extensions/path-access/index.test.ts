@@ -226,6 +226,36 @@ describe("pathAccess extension hook", () => {
     ]);
   });
 
+  it("parks the raw PowerShell command", async () => {
+    const pi = createMock<ExtensionAPI>();
+    let request: PiLiveRequest | undefined;
+    pi.events.emit.mockImplementation((name, data) => {
+      if (name === "pi-live:park") request = data as PiLiveRequest;
+    });
+    const ctx = createMock<ExtensionContext>({
+      cwd: "/workspace",
+      hasUI: true,
+      signal: new AbortController().signal,
+    });
+    ctx.ui.custom.mockImplementation(
+      async (factory) =>
+        new Promise<unknown>((resolve) => {
+          factory(createMock(), createMock(), createMock(), resolve);
+          assert(request);
+          request.answer(
+            { result: "allow-file-once" },
+            { connId: "1", name: "test" },
+          );
+        }),
+    );
+    await pathAccess(pi);
+    const handler = registeredExtensionHandler(pi, "tool_call");
+    assert(typeof handler === "function");
+    const command = "Get-Content\n  /outside/secret.txt";
+    await handler({ ...powershellToolCall, input: { command } }, ctx);
+    expect(request?.view).toMatchObject({ toolName: "powershell", command });
+  });
+
   it("never parks when custom UI falls back to RPC", async () => {
     const pi = createMock<ExtensionAPI>();
     const ctx = createMock<ExtensionContext>({
