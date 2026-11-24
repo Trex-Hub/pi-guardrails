@@ -15,6 +15,7 @@ import {
   GUARDRAILS_PROMPT_OPENED_EVENT,
   type GuardrailsPromptOpenedPayload,
 } from "../../src/shared/events";
+import type { PiLiveRequest } from "../../src/shared/pi-live";
 import pathAccess from "./index";
 import type { createPathAccessPromptComponent } from "./prompt";
 import { DIR_OPTIONS, FILE_OPTIONS } from "./prompt";
@@ -140,6 +141,107 @@ describe("pathAccess extension hook", () => {
       alwaysScope: "local",
     };
     mockState.saves = [];
+  });
+
+  it("persists a client always grant and correlates the parked id", async () => {
+    const pi = createMock<ExtensionAPI>();
+    let request: PiLiveRequest | undefined;
+    pi.events.emit.mockImplementation((name, data) => {
+      if (name === "pi-live:park") request = data as PiLiveRequest;
+    });
+    const ctx = createMock<ExtensionContext>({
+      cwd: "/workspace",
+      hasUI: true,
+      signal: new AbortController().signal,
+    });
+    ctx.ui.custom.mockImplementation(
+      async (factory) =>
+        new Promise<unknown>((resolve) => {
+          factory(createMock(), createMock(), createMock(), resolve);
+          assert(request);
+          expect(
+            request.answer(
+              { result: "allow-file-always" },
+              { connId: "1", name: "test" },
+            ),
+          ).toEqual({ status: "delivered" });
+        }),
+    );
+    await pathAccess(pi);
+    const handler = registeredExtensionHandler(pi, "tool_call");
+    assert(typeof handler === "function");
+    const result = await handler(toolCall, ctx);
+    expect(result).toBeUndefined();
+    expect(request?.id).toBe(emittedPromptOpened(pi)?.prompt.id);
+    expect(mockState.saves).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: "local",
+          config: expect.objectContaining({
+            pathAccess: expect.objectContaining({
+              allowedPaths: expect.any(Array),
+            }),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("parks each outside target separately", async () => {
+    vi.mocked(targetsForTool).mockResolvedValueOnce([
+      "/outside/a",
+      "/elsewhere/b",
+    ]);
+    const pi = createMock<ExtensionAPI>();
+    const requests: PiLiveRequest[] = [];
+    pi.events.emit.mockImplementation((name, data) => {
+      if (name === "pi-live:park") requests.push(data as PiLiveRequest);
+    });
+    const ctx = createMock<ExtensionContext>({
+      cwd: "/workspace",
+      hasUI: true,
+      signal: new AbortController().signal,
+    });
+    ctx.ui.custom.mockImplementation(
+      async (factory) =>
+        new Promise<unknown>((resolve) => {
+          factory(createMock(), createMock(), createMock(), resolve);
+          requests
+            .at(-1)
+            ?.answer(
+              { result: "allow-file-once" },
+              { connId: "1", name: "test" },
+            );
+        }),
+    );
+    await pathAccess(pi);
+    const handler = registeredExtensionHandler(pi, "tool_call");
+    assert(typeof handler === "function");
+    await handler(toolCall, ctx);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.id).not.toBe(requests[1]?.id);
+    expect(requests.map((request) => request.view)).toMatchObject([
+      { path: "/outside/a" },
+      { path: "/elsewhere/b" },
+    ]);
+  });
+
+  it("never parks when custom UI falls back to RPC", async () => {
+    const pi = createMock<ExtensionAPI>();
+    const ctx = createMock<ExtensionContext>({
+      cwd: "/workspace",
+      hasUI: true,
+      mode: "rpc",
+    });
+    ctx.ui.custom.mockResolvedValue(undefined);
+    ctx.ui.select.mockResolvedValue(undefined);
+    await pathAccess(pi);
+    const handler = registeredExtensionHandler(pi, "tool_call");
+    assert(typeof handler === "function");
+    await handler(toolCall, ctx);
+    expect(
+      pi.events.emit.mock.calls.some(([name]) => name === "pi-live:park"),
+    ).toBe(false);
   });
 
   it("emits a correlated lifecycle around an outside-path prompt", async () => {

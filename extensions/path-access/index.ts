@@ -34,6 +34,7 @@ import {
   persistGrant,
   resolveAllowedPaths,
 } from "./grants";
+import { pathPark } from "./pi-live";
 import {
   createPathAccessPromptComponent,
   type PromptResult,
@@ -209,29 +210,43 @@ export default async function pathAccess(pi: ExtensionAPI) {
       });
       pi.events.emit(GUARDRAILS_PROMPT_OPENED_EVENT, promptOpened);
 
+      const parked = pathPark({
+        events: pi.events,
+        id: promptOpened.prompt.id,
+        toolName: event.toolName,
+        path: absolutePath,
+        displayPath: safety.metadata.displayPath,
+        directory: dirPath,
+        cwd: ctx.cwd,
+        command: shellCommand,
+        reason: safety.reason,
+        alwaysScope: config.pathAccess.alwaysScope,
+        showFileOptions,
+        dirGrantable,
+        alwaysEnabled,
+        signal: ctx.signal,
+        component: createPathAccessPromptComponent(
+          event.toolName,
+          safety.metadata.displayPath,
+          normalizeForDisplay(parentDir, ctx.cwd),
+          ctx.cwd,
+          showFileOptions,
+          {
+            command: shellCommand,
+            dirGrantable,
+            alwaysEnabled,
+            inputGuardMs: config.prompts.inputGuardMs,
+          },
+        ),
+      });
       let result: PromptResult;
       try {
-        const customResult = await ctx.ui.custom<PromptResult>(
-          createPathAccessPromptComponent(
-            event.toolName,
-            safety.metadata.displayPath,
-            normalizeForDisplay(parentDir, ctx.cwd),
-            ctx.cwd,
-            showFileOptions,
-            {
-              command: shellCommand,
-              dirGrantable,
-              alwaysEnabled,
-              inputGuardMs: config.prompts.inputGuardMs,
-            },
-          ),
-          {
-            blocked: {
-              kind: "permission",
-              message: "Guardrails approval required",
-            },
+        const customResult = await ctx.ui.custom<PromptResult>(parked.factory, {
+          blocked: {
+            kind: "permission",
+            message: "Guardrails approval required",
           },
-        );
+        });
 
         if (customResult === undefined) {
           // RPC mode has no custom component support; fall back to a plain
@@ -261,6 +276,7 @@ export default async function pathAccess(pi: ExtensionAPI) {
           result = customResult;
         }
       } finally {
+        parked.dispose();
         pi.events.emit(
           GUARDRAILS_PROMPT_CLOSED_EVENT,
           createPromptClosedPayload(promptOpened),
