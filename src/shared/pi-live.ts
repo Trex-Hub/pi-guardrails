@@ -114,6 +114,7 @@ export function parkPrompt<T extends string>(params: {
   }
   return {
     keyboard: (result: T) => finish(result, { by: "keyboard" }),
+    abort: (result: T) => finish(result, { by: "abort" }),
     dispose,
   };
 }

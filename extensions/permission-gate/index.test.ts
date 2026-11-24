@@ -23,6 +23,7 @@ import {
   GUARDRAILS_PROMPT_OPENED_EVENT,
   type GuardrailsPromptOpenedPayload,
 } from "../../src/shared/events";
+import type { PiLiveRequest } from "../../src/shared/pi-live";
 import permissionGate from "./index";
 
 function makeConfig(overrides: Record<string, unknown> = {}): ResolvedConfig {
@@ -48,6 +49,7 @@ vi.mock("../../src/shared/config", () => {
   return {
     configLoader: {
       load: vi.fn().mockResolvedValue(undefined),
+      save: vi.fn().mockResolvedValue(undefined),
       getConfig: vi.fn(() => makeConfig()),
     },
   };
@@ -92,6 +94,150 @@ describe("permissionGate extension hook", () => {
     pi = createMock<ExtensionAPI>();
     await permissionGate(pi);
     toolCallHandler = registeredToolCallHandler(pi);
+  });
+
+  it.each(["allow", "allow-session", "deny", "stop"] as const)(
+    "delivers client result %s through the custom prompt",
+    async (answer) => {
+      assert(toolCallHandler);
+      const controller = new AbortController();
+      const close = vi.fn();
+      let request: PiLiveRequest | undefined;
+      pi.events.emit.mockImplementation((event, data) => {
+        if (event === "pi-live:park") {
+          request = data as PiLiveRequest;
+          request.accept({ close });
+        }
+      });
+      const ctx = createCtx({ signal: controller.signal });
+      vi.mocked(ctx.ui.custom).mockImplementation(async (factory) => {
+        return await new Promise<unknown>((resolve) => {
+          factory(createMock(), createMock(), createMock(), resolve);
+          assert(request);
+          expect(
+            request.answer({ result: answer }, { connId: "1", name: "test" }),
+          ).toEqual({ status: "delivered" });
+        });
+      });
+      const result = await toolCallHandler(DANGEROUS_EVENT, ctx);
+      expect(close).toHaveBeenCalledOnce();
+      expect(close).toHaveBeenCalledWith({
+        by: "client",
+        client: { connId: "1", name: "test" },
+      });
+      if (answer === "allow-session")
+        expect(configLoader.save).toHaveBeenCalledWith(
+          "memory",
+          expect.objectContaining({
+            permissionGate: expect.objectContaining({
+              allowedPatterns: expect.arrayContaining([
+                { pattern: "^(?:dangerous-cmd)(?![\\s\\S])", regex: true },
+              ]),
+            }),
+          }),
+        );
+      if (answer === "stop") expect(ctx.abort).toHaveBeenCalledOnce();
+      if (answer === "deny" || answer === "stop")
+        expect(result).toHaveProperty("block", true);
+      else expect(result).toBeUndefined();
+      const opened = pi.events.emit.mock.calls.find(
+        ([event]) => event === GUARDRAILS_PROMPT_OPENED_EVENT,
+      )?.[1] as GuardrailsPromptOpenedPayload;
+      expect(request?.id).toBe(opened.prompt.id);
+      expect(request?.view).toMatchObject({
+        toolName: "bash",
+        command: DANGEROUS_EVENT.input.command,
+        reason: "test danger",
+      });
+    },
+  );
+
+  it("preserves long multiline commands and bypasses the keyboard guard", async () => {
+    assert(toolCallHandler);
+    const command = `dangerous-cmd\n${"x".repeat(600)}`;
+    vi.mocked(configLoader.getConfig).mockReturnValue({
+      ...makeConfig(),
+      prompts: { inputGuardMs: 10000 },
+    });
+    const ctx = createCtx({ signal: new AbortController().signal });
+    let request: PiLiveRequest | undefined;
+    pi.events.emit.mockImplementation((event, data) => {
+      if (event === "pi-live:park") request = data as PiLiveRequest;
+    });
+    vi.mocked(ctx.ui.custom).mockImplementation(
+      async (factory) =>
+        new Promise<unknown>((resolve) => {
+          factory(createMock(), createMock(), createMock(), resolve);
+          assert(request);
+          expect(request.view).toMatchObject({ command });
+          expect(
+            request.answer({ result: "allow" }, { connId: "1", name: "test" }),
+          ).toEqual({ status: "delivered" });
+        }),
+    );
+    await toolCallHandler({ ...DANGEROUS_EVENT, input: { command } }, ctx);
+  });
+
+  it("closes a keyboard answer and rejects a late client", async () => {
+    assert(toolCallHandler);
+    const close = vi.fn();
+    let request: PiLiveRequest | undefined;
+    pi.events.emit.mockImplementation((event, data) => {
+      if (event === "pi-live:park") {
+        request = data as PiLiveRequest;
+        request.accept({ close });
+      }
+    });
+    const ctx = createCtx({ signal: new AbortController().signal });
+    vi.mocked(ctx.ui.custom).mockImplementation(
+      async (factory) =>
+        new Promise<unknown>((resolve) => {
+          const component = factory(
+            createMock(),
+            createMock(),
+            createMock(),
+            resolve,
+          );
+          assert("handleInput" in component);
+          component.handleInput?.("y");
+          assert(request);
+          expect(
+            request.answer({ result: "deny" }, { connId: "1", name: "test" }),
+          ).toEqual({ status: "invalid", reason: "not open" });
+        }),
+    );
+    await toolCallHandler(DANGEROUS_EVENT, ctx);
+    expect(close).toHaveBeenCalledExactlyOnceWith({ by: "keyboard" });
+  });
+
+  it("ends the custom prompt on abort", async () => {
+    assert(toolCallHandler);
+    const controller = new AbortController();
+    const close = vi.fn();
+    pi.events.emit.mockImplementation((event, data) => {
+      if (event === "pi-live:park") (data as PiLiveRequest).accept({ close });
+    });
+    const ctx = createCtx({ signal: controller.signal });
+    vi.mocked(ctx.ui.custom).mockImplementation(
+      async (factory) =>
+        new Promise<unknown>((resolve) => {
+          factory(createMock(), createMock(), createMock(), resolve);
+          controller.abort();
+        }),
+    );
+    const result = await toolCallHandler(DANGEROUS_EVENT, ctx);
+    expect(result).toMatchObject({
+      block: true,
+    });
+    expect(close).toHaveBeenCalledExactlyOnceWith({ by: "abort" });
+  });
+
+  it("does not park on RPC fallback", async () => {
+    assert(toolCallHandler);
+    await toolCallHandler(DANGEROUS_EVENT, createCtx());
+    expect(
+      pi.events.emit.mock.calls.some(([event]) => event === "pi-live:park"),
+    ).toBe(false);
   });
 
   it("registers the permissionGate feature on request", async () => {

@@ -23,7 +23,7 @@ import {
   setupLegacyPromptEventAlias,
 } from "../../src/shared/events";
 import { isCommandAllowed, saveCommandSessionGrant } from "./grants";
-import { createPermissionGateConfirmComponent } from "./prompt";
+import { COMMAND_OPTIONS, commandPark } from "./pi-live";
 import {
   createPermissionGateRule,
   formatAutoDenyReason,
@@ -156,36 +156,38 @@ export default async function permissionGate(pi: ExtensionAPI) {
     });
     pi.events.emit(GUARDRAILS_PROMPT_OPENED_EVENT, promptOpened);
 
+    const parked = commandPark({
+      events: pi.events,
+      id: promptOpened.prompt.id,
+      toolName,
+      command,
+      reason: safety.reason,
+      signal: ctx.signal,
+      inputGuardMs: config.prompts.inputGuardMs,
+    });
     let result: ConfirmResult;
     try {
-      const customResult = await ctx.ui.custom<ConfirmResult>(
-        createPermissionGateConfirmComponent(
-          command,
-          safety.reason,
-          config.prompts.inputGuardMs,
-        ),
-        {
-          blocked: {
-            kind: "permission",
-            message: "Guardrails approval required",
-          },
+      const customResult = await ctx.ui.custom<ConfirmResult>(parked.factory, {
+        blocked: {
+          kind: "permission",
+          message: "Guardrails approval required",
         },
-      );
+      });
 
       if (customResult === undefined) {
         const indentedCommand = command.replace(/^/gm, "    ");
         const selection = await ctx.ui.select(
           `Dangerous command: ${safety.reason}\n\n${indentedCommand}`,
-          ["Allow once", "Allow for session", "Deny", "Decline and stop"],
+          COMMAND_OPTIONS.map((option) => option.label),
         );
-        if (selection === "Allow once") result = "allow";
-        else if (selection === "Allow for session") result = "allow-session";
-        else if (selection === "Decline and stop") result = "stop";
-        else result = "deny";
+        result =
+          COMMAND_OPTIONS.find((option) => option.label === selection)
+            ?.result ?? "deny";
       } else {
         result = customResult;
       }
     } finally {
+      parked.dispose();
       pi.events.emit(
         GUARDRAILS_PROMPT_CLOSED_EVENT,
         createPromptClosedPayload(promptOpened),
