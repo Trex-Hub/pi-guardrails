@@ -36,6 +36,7 @@ import { configLoader, type ResolvedConfig } from "../../src/shared/config";
 import {
   emitAwayItem,
   GUARDRAILS_ACTION_BLOCKED_EVENT,
+  GUARDRAILS_AWAY_ITEM_EVENT,
   GUARDRAILS_AWAY_PAUSED_EVENT,
   GUARDRAILS_PRESENCE_CHANGED_EVENT,
 } from "../../src/shared/events";
@@ -722,6 +723,36 @@ describe("away extension", () => {
       expect(
         harness.sendMessage.mock.calls[0]?.[0].content.split("\n"),
       ).toHaveLength(2);
+    });
+
+    it("emits guardrails:away:item with {item, decision} once per applied decision, after the applied entry", async () => {
+      const { harness, state } = await setup();
+      await writeItem(item("i2"));
+      state.ownItemIds.add("i2");
+      const order: string[] = [];
+      harness.appendEntry.mockImplementation(() => order.push("entry"));
+      const emit = harness.pi.events.emit.bind(harness.pi.events);
+      harness.pi.events.emit = (channel: string, data: unknown) => {
+        if (channel === GUARDRAILS_AWAY_ITEM_EVENT) order.push("event");
+        emit(channel, data);
+      };
+      await writeDecision(decision("i1", "approve"));
+      await writeDecision(decision("i2", "fine"));
+      await vi.advanceTimersByTimeAsync(5000);
+      await vi.advanceTimersByTimeAsync(10000);
+      const seen = channels(harness, GUARDRAILS_AWAY_ITEM_EVENT);
+      expect(seen).toHaveLength(2);
+      const byId = Object.fromEntries(
+        seen.map((e) => {
+          const data = e as {
+            item: { id: string };
+            decision: { decision: string };
+          };
+          return [data.item.id, data.decision.decision];
+        }),
+      );
+      expect(byId).toEqual({ i1: "approve", i2: "fine" });
+      expect(order.indexOf("entry")).toBeLessThan(order.indexOf("event"));
     });
 
     it("applies a decision once even when the watcher and the poll both fire", async () => {

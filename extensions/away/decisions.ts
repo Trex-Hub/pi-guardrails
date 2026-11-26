@@ -15,6 +15,7 @@ import {
   rejected,
 } from "../../src/shared/away/messages";
 import { type AwayState, resumeRun } from "../../src/shared/away/state";
+import { emitAwayItem } from "../../src/shared/events";
 
 export const APPLIED_ENTRY = "guardrails:inbox-applied";
 
@@ -88,6 +89,7 @@ export async function applyDecisions(
       state.memory.set(key, { outcome: "denied", itemId: item.id });
       lines.push(rejected(label));
     }
+    emitAwayItem(pi, item, decision);
   }
   if (lines.length === 0) return;
   liftPause(pi, state);
