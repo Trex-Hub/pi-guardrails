@@ -36,7 +36,7 @@ interface ParkOption<T extends string> {
 export function parkPrompt<T extends string>(params: {
   events: { emit(event: string, data: PiLiveRequest): void };
   id: string;
-  kind: "guardrails.command" | "guardrails.path";
+  kind: "guardrails.command" | "guardrails.path" | "guardrails.inbox";
   title: string;
   view: unknown;
   /** Epoch ms after which the prompt closes by itself. Lets clients show a countdown. */
@@ -61,7 +61,7 @@ export function parkPrompt<T extends string>(params: {
     }
     return true;
   };
-  const dispose = (by?: "abort" | "error") => {
+  const dispose = (by?: "abort" | "error" | "shutdown") => {
     if (disposed) return;
     disposed = true;
     if (open && by) outcome = { by };
@@ -124,6 +124,8 @@ export function parkPrompt<T extends string>(params: {
     timeout: (result: T) => finish(result, { by: "timeout" }),
     /** How the prompt closed (or will close). */
     closedBy: () => outcome.by,
+    /** How the prompt closed, with the client that answered if there was one. */
+    outcome: () => outcome,
     dispose,
   };
 }

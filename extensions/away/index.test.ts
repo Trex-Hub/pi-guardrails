@@ -12,6 +12,7 @@ import {
   type InboxDecision,
   type InboxItem,
   inboxDir,
+  readDecisions,
   sessionsDir,
   writeDecision,
   writeItem,
@@ -23,12 +24,14 @@ import {
   pauseRun,
   setPresence,
 } from "../../src/shared/away/state";
-import type { ResolvedConfig } from "../../src/shared/config";
+import { configLoader, type ResolvedConfig } from "../../src/shared/config";
 import {
+  emitAwayItem,
   GUARDRAILS_ACTION_BLOCKED_EVENT,
   GUARDRAILS_AWAY_PAUSED_EVENT,
   GUARDRAILS_PRESENCE_CHANGED_EVENT,
 } from "../../src/shared/events";
+import type { PiLiveRequest } from "../../src/shared/pi-live";
 import away from "./index";
 
 const h = vi.hoisted(() => ({
@@ -79,6 +82,10 @@ interface Harness {
   sendMessage: ReturnType<typeof vi.fn>;
   appendEntry: ReturnType<typeof vi.fn>;
   emitted: Array<{ channel: string; data: unknown }>;
+  parked: Array<{
+    request: PiLiveRequest;
+    ticket: { close: ReturnType<typeof vi.fn> };
+  }>;
   fire: (event: string, payload?: unknown, ctx?: unknown) => Promise<unknown>;
   command: (args: string) => Promise<void>;
   keypress: () => void;
@@ -125,6 +132,13 @@ async function boot(
   const sendMessage = vi.fn();
   const appendEntry = vi.fn();
   const emitted: Harness["emitted"] = [];
+  const parked: Harness["parked"] = [];
+  bus.on("pi-live:park", (data) => {
+    const request = data as PiLiveRequest;
+    const ticket = { close: vi.fn() };
+    parked.push({ request, ticket });
+    request.accept(ticket);
+  });
   const emit = bus.emit.bind(bus);
   bus.emit = (channel: string, data: unknown) => {
     emitted.push({ channel, data });
@@ -160,6 +174,7 @@ async function boot(
     sendMessage,
     appendEntry,
     emitted,
+    parked,
     get idle() {
       return shared.idle;
     },
@@ -767,6 +782,154 @@ describe("away extension", () => {
         "guardrails:away",
         "away · 0 waiting",
       );
+    });
+  });
+
+  describe("pi-live inbox items", () => {
+    const answer = (
+      parked: Harness["parked"][number],
+      result: string,
+      name = "phone",
+    ) => parked.request.answer({ result }, { connId: "c1", name } as never);
+
+    it("parks this session's open waiting and urgent items at start", async () => {
+      await writeItem(item("w1"));
+      await writeItem(item("u1", { kind: "urgent" }));
+      await writeItem(item("a1", { kind: "allowed" }));
+      await writeItem(item("o1", { session: { id: "other", cwd: "/x" } }));
+      await writeItem(item("d1"));
+      await writeDecision(decision("d1", "reject"));
+      const harness = await start();
+      expect(harness.parked.map((p) => p.request.id).sort()).toEqual([
+        "u1",
+        "w1",
+      ]);
+      const request = harness.parked.find(
+        (p) => p.request.id === "w1",
+      )?.request;
+      expect(request).toMatchObject({
+        protocol: 1,
+        owner: "guardrails",
+        kind: "guardrails.inbox",
+        title: "Waiting for approval: sudo ls",
+        view: {
+          itemId: "w1",
+          cwd: "/work",
+          toolName: "bash",
+          action: { kind: "command", command: "sudo ls" },
+          flaggedReason: "superuser command",
+          risk: "high",
+          options: [
+            { result: "approve", label: "Approve once" },
+            { result: "approve-always", label: "Always allow" },
+            { result: "reject", label: "Reject" },
+          ],
+        },
+      });
+    });
+
+    it("parks a new item written by this session, not by another", async () => {
+      const harness = await start();
+      emitAwayItem(harness.pi, item("n1"));
+      emitAwayItem(harness.pi, item("n2", { session: { id: "x", cwd: "/y" } }));
+      emitAwayItem(harness.pi, item("n3", { kind: "allowed" }));
+      expect(harness.parked.map((p) => p.request.id)).toEqual(["n1"]);
+    });
+
+    it("a client answer writes the decision, makes the user present, closes the ticket and applies it", async () => {
+      await writeItem(item("w1"));
+      const harness = await start();
+      const state = getAwayState("s1");
+      setPresence(harness.pi, state, "away", "command");
+      const parked = harness.parked[0] as Harness["parked"][number];
+      expect(answer(parked, "approve")).toEqual({ status: "delivered" });
+      await vi.advanceTimersByTimeAsync(300);
+      const stored = await readDecisions(["w1"]);
+      expect(stored[0]).toMatchObject({
+        decision: "approve",
+        decidedBy: { kind: "pi-live", client: "phone" },
+      });
+      expect(parked.ticket.close).toHaveBeenCalledTimes(1);
+      expect(parked.ticket.close.mock.calls[0]?.[0]).toMatchObject({
+        by: "client",
+        client: { name: "phone" },
+      });
+      expect(state.presence).toBe("present");
+      const events = channels(harness, GUARDRAILS_PRESENCE_CHANGED_EVENT);
+      expect(events.at(-1)).toMatchObject({ cause: "client" });
+      expect(harness.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("always: a client answer does not change presence", async () => {
+      h.mode = "always";
+      await writeItem(item("w1"));
+      const harness = await start();
+      answer(harness.parked[0] as Harness["parked"][number], "reject");
+      await vi.advanceTimersByTimeAsync(300);
+      expect(channels(harness, GUARDRAILS_PRESENCE_CHANGED_EVENT)).toEqual([]);
+      const stored = await readDecisions(["w1"]);
+      expect(stored[0]?.decision).toBe("reject");
+    });
+
+    it("a decision made elsewhere closes the ticket with by keyboard", async () => {
+      await writeItem(item("w1"));
+      const harness = await start();
+      await writeDecision(decision("w1", "approve"));
+      await vi.advanceTimersByTimeAsync(300);
+      const parked = harness.parked[0] as Harness["parked"][number];
+      expect(parked.ticket.close).toHaveBeenCalledTimes(1);
+      expect(parked.ticket.close.mock.calls[0]?.[0]).toEqual({
+        by: "keyboard",
+      });
+    });
+
+    it("a client answer that lost the race closes quietly as answered", async () => {
+      await writeItem(item("w1"));
+      const harness = await start();
+      const parked = harness.parked[0] as Harness["parked"][number];
+      await writeDecision(decision("w1", "reject"));
+      answer(parked, "approve");
+      await vi.advanceTimersByTimeAsync(300);
+      const stored = await readDecisions(["w1"]);
+      expect(stored[0]?.decision).toBe("reject");
+      expect(parked.ticket.close).toHaveBeenCalledTimes(1);
+      expect(harness.parked).toHaveLength(1);
+    });
+
+    it("a failed global grant writes no decision, warns, and parks the item again", async () => {
+      await writeItem(item("w1"));
+      const harness = await start();
+      vi.mocked(configLoader.save).mockRejectedValueOnce(
+        new Error("disk full"),
+      );
+      answer(harness.parked[0] as Harness["parked"][number], "approve-always");
+      await vi.advanceTimersByTimeAsync(300);
+      const stored = await readDecisions(["w1"]);
+      expect(stored).toEqual([]);
+      const warned = harness.notify.mock.calls;
+      expect(String(warned.at(-1)?.[0])).toContain("disk full");
+      expect(harness.parked).toHaveLength(2);
+      expect(harness.parked[1]?.request.id).toBe("w1");
+    });
+
+    it("closes every open ticket with by shutdown", async () => {
+      await writeItem(item("w1"));
+      await writeItem(item("w2"));
+      const harness = await start();
+      await harness.fire("session_shutdown");
+      for (const parked of harness.parked) {
+        expect(parked.ticket.close).toHaveBeenCalledTimes(1);
+        expect(parked.ticket.close.mock.calls[0]?.[0]).toEqual({
+          by: "shutdown",
+        });
+      }
+    });
+
+    it("off mode parks nothing", async () => {
+      h.mode = "off";
+      await writeItem(item("w1"));
+      const harness = await start();
+      expect(harness.parked).toEqual([]);
     });
   });
 

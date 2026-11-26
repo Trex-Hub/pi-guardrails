@@ -3,7 +3,11 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { prune, removeSessionStatus } from "../../src/shared/away/inbox";
+import {
+  type InboxItem,
+  prune,
+  removeSessionStatus,
+} from "../../src/shared/away/inbox";
 import { PAUSED_HOLD } from "../../src/shared/away/messages";
 import {
   type AwayState,
@@ -15,11 +19,15 @@ import { configLoader } from "../../src/shared/config";
 import type { ResolvedConfig } from "../../src/shared/config/types";
 import {
   emitActionBlocked,
+  GUARDRAILS_AWAY_ITEM_EVENT,
   GUARDRAILS_AWAY_PAUSED_EVENT,
   GUARDRAILS_PRESENCE_CHANGED_EVENT,
 } from "../../src/shared/events";
+import { decide } from "./decide";
 import { applyDecisions, liftPause, restoreSession } from "./decisions";
 import { pausedHoldAction } from "./hold";
+import { registerInboxCommand } from "./inbox-command";
+import { type InboxAnswer, type InboxTicket, parkInboxItem } from "./pi-live";
 import { openCount, statusLine, writeStatus } from "./status";
 import { startWatching, type Watching } from "./watch";
 
@@ -36,6 +44,8 @@ interface Active {
   ctx: ExtensionContext;
   applied: Set<string>;
   watching?: Watching;
+  /** pi-live tickets for this session's open items, by item id. */
+  tickets: Map<string, InboxTicket>;
   stops: Array<() => void>;
   runState: "running" | "idle";
   /** Open waiting and urgent items on this machine. */
@@ -86,7 +96,55 @@ export default async function away(pi: ExtensionAPI): Promise<void> {
     if (!config || a.closed) return;
     const state = getAwayState(a.sessionId, config.away);
     await applyDecisions(pi, a.ctx, state, a.applied, delivery);
+    // A decision made elsewhere closes the matching pi-live ticket.
+    for (const [id, ticket] of a.tickets) {
+      if (!a.applied.has(id)) continue;
+      a.tickets.delete(id);
+      ticket.closeOutside();
+    }
     await refresh(a);
+  }
+
+  /** Offers an open item to pi-live clients. */
+  function parkItem(a: Active, item: InboxItem): void {
+    if (a.closed || item.kind === "allowed") return;
+    if (a.tickets.has(item.id) || a.applied.has(item.id)) return;
+    a.tickets.set(
+      item.id,
+      parkInboxItem(pi, item, (answer, client) => {
+        answerFromClient(a, item, answer, client?.name).catch(() => undefined);
+      }),
+    );
+  }
+
+  async function answerFromClient(
+    a: Active,
+    item: InboxItem,
+    answer: InboxAnswer,
+    client: string | undefined,
+  ): Promise<void> {
+    const result = await decide(item, answer, {
+      kind: "pi-live",
+      client: client ?? "pi-live",
+    });
+    const ticket = a.tickets.get(item.id);
+    a.tickets.delete(item.id);
+    ticket?.closeAnswered();
+    if (result.status === "grant-failed" || result.status === "write-failed") {
+      if (a.ctx.hasUI) {
+        const why =
+          result.status === "grant-failed"
+            ? `Could not save the global grant, so nothing was decided: ${result.error}`
+            : "Could not write the decision.";
+        a.ctx.ui.notify(why, "warning");
+      }
+      // Nothing was decided: offer the item again.
+      parkItem(a, item);
+      return;
+    }
+    const config = awayConfig();
+    if (config) setPresence(pi, stateOf(a.ctx, config), "present", "client");
+    await schedule(a, "live");
   }
 
   /**
@@ -110,6 +168,8 @@ export default async function away(pi: ExtensionAPI): Promise<void> {
     if (!a) return;
     a.closed = true;
     a.watching?.close();
+    for (const ticket of a.tickets.values()) ticket.shutdown();
+    a.tickets.clear();
     for (const unsubscribe of a.stops) unsubscribe();
     if (a.ctx.hasUI) a.ctx.ui.setStatus(STATUS_KEY, undefined);
     // Let a running tick finish first, so it cannot rewrite the status file.
@@ -124,10 +184,12 @@ export default async function away(pi: ExtensionAPI): Promise<void> {
   ): Promise<void> {
     const sessionId = ctx.sessionManager.getSessionId();
     const state = stateOf(ctx, config);
+    const restored = await restoreSession(ctx, state);
     const a: Active = {
       sessionId,
       ctx,
-      applied: await restoreSession(ctx, state),
+      applied: restored.applied,
+      tickets: new Map(),
       stops: [],
       runState: ctx.isIdle() ? "idle" : "running",
       open: 0,
@@ -141,6 +203,11 @@ export default async function away(pi: ExtensionAPI): Promise<void> {
     a.stops.push(
       pi.events.on(GUARDRAILS_AWAY_PAUSED_EVENT, onChange),
       pi.events.on(GUARDRAILS_PRESENCE_CHANGED_EVENT, onChange),
+      pi.events.on(GUARDRAILS_AWAY_ITEM_EVENT, (data) => {
+        const item = (data as { item?: InboxItem } | undefined)?.item;
+        if (item?.session.id === sessionId) parkItem(a, item);
+        onChange();
+      }),
     );
     if (ctx.mode === "tui" && ctx.hasUI) {
       a.stops.push(
@@ -154,6 +221,8 @@ export default async function away(pi: ExtensionAPI): Promise<void> {
       );
     }
     await schedule(a, delivery);
+    // Decisions are applied by now, so what is still open is worth parking.
+    for (const item of restored.ownItems) parkItem(a, item);
     await prune(Date.now());
     if (a.closed) return;
     a.watching = await startWatching(POLL_MS, () => {
@@ -241,6 +310,8 @@ export default async function away(pi: ExtensionAPI): Promise<void> {
     active.runState = "idle";
     await refresh(active);
   });
+
+  registerInboxCommand(pi);
 
   pi.registerCommand("guardrails:away", {
     description: "Count as away: Guardrails applies its away rules",

@@ -4,6 +4,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { actionKey } from "../../src/core/away";
 import {
+  type InboxItem,
   readDecisions,
   readItem,
   readItems,
@@ -31,10 +32,13 @@ export function liftPause(pi: ExtensionAPI, state: AwayState): void {
 export async function restoreSession(
   ctx: ExtensionContext,
   state: AwayState,
-): Promise<Set<string>> {
+): Promise<{ applied: Set<string>; ownItems: InboxItem[] }> {
   const sessionId = ctx.sessionManager.getSessionId();
+  const ownItems: InboxItem[] = [];
   for (const item of await readItems()) {
-    if (item.session.id === sessionId) state.ownItemIds.add(item.id);
+    if (item.session.id !== sessionId) continue;
+    state.ownItemIds.add(item.id);
+    ownItems.push(item);
   }
   const applied = new Set<string>();
   for (const entry of ctx.sessionManager.getEntries()) {
@@ -42,7 +46,7 @@ export async function restoreSession(
     const id = (entry.data as { id?: unknown } | undefined)?.id;
     if (typeof id === "string") applied.add(id);
   }
-  return applied;
+  return { applied, ownItems };
 }
 
 /**

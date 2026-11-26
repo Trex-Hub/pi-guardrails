@@ -141,4 +141,16 @@ describe("parkPrompt", () => {
     expect(close).toHaveBeenCalledExactlyOnceWith({ by: "timeout" });
     expect(park.closedBy()).toBe("timeout");
   });
+  it("closes with by shutdown without delivering a result", () => {
+    const { park, onResult, close } = setup();
+    park.dispose("shutdown");
+    expect(onResult).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledExactlyOnceWith({ by: "shutdown" });
+  });
+  it("exposes the client that answered", () => {
+    const { park, request } = setup();
+    const client = { connId: "c1", name: "phone" };
+    request.answer({ result: "allow" }, client);
+    expect(park.outcome()).toEqual({ by: "client", client });
+  });
 });
