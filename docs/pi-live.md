@@ -1,12 +1,12 @@
 # Answering prompts from other apps (pi-live)
 
-When pi-live is loaded, Guardrails parks interactive permission-gate and path-access prompts so a pi-live client can answer them. The terminal and clients race: the first answer wins. Without pi-live, prompts remain keyboard-only. Parking occurs only inside the TUI custom prompt; RPC's select fallback never parks. Noninteractive blocks, automatic decisions and delegated decisions do not park.
+When pi-live is loaded, Guardrails parks interactive permission-gate and path-access prompts so a pi-live client can answer them. The terminal and clients race: the first answer wins. Without pi-live, prompts remain keyboard-only. Parking occurs only inside the TUI custom prompt; RPC's select fallback never parks. Away mode also parks inbox items (see [Inbox items](#waiting-items-guardrailsinbox)). Noninteractive blocks, automatic decisions and delegated decisions do not park.
 
 **Security:** anyone who can use a pi-live client can approve `sudo`. Protect access to pi-live accordingly.
 
 ## Common contract
 
-Items use protocol `1`, owner `guardrails`, and the same `id` as the corresponding `guardrails:prompt:opened` event's `prompt.id`. They have no `expiresAt`. Each outside target that needs confirmation has its own item. The client answers with an object:
+Items use protocol `1`, owner `guardrails`, and the same `id` as the corresponding `guardrails:prompt:opened` event's `prompt.id`. They have no `expiresAt` unless away mode is on in `auto` mode (see [Prompt deadline](#prompt-deadline)). Each outside target that needs confirmation has its own item. The client answers with an object:
 
 ```json
 { "result": "allow" }
@@ -23,7 +23,7 @@ Invalid answers leave the item open and return one of these exact reasons:
 - `option "<result>" disabled: <disabledReason>`
 - `not open` (the prompt has already ended)
 
-A ticket closes `by: "keyboard"` for a keyboard choice, `by: "client"` for a client answer, `by: "abort"` if the context signal aborts, and `by: "error"` on an error. When the context signal aborts, the prompt ends as `deny`; for a dangerous command, Guardrails records `User denied dangerous command`. The turn is already being aborted.
+A ticket closes `by: "keyboard"` for a keyboard choice, `by: "client"` for a client answer, `by: "abort"` if the context signal aborts, `by: "error"` on an error, `by: "timeout"` when the away-mode deadline passes (see below), and `by: "shutdown"` when the session ends while an inbox item is open. When the context signal aborts, the prompt ends as `deny`; for a dangerous command, Guardrails records `User denied dangerous command`. The turn is already being aborted.
 
 ## Dangerous commands: `guardrails.command`
 
@@ -72,3 +72,43 @@ The title is `Outside workspace: <displayPath>`. The JSON view is:
 `target` is `directory` for directory-only prompts (`ls` and `find`), otherwise `file`. Options and ordering match the terminal: file prompts offer Allow once, Allow file this session, Allow file always, Allow directory this session, Allow directory always, and Deny; directory-only prompts offer Allow once, Allow directory this session, Allow directory always, and Deny. Directory grant options are omitted if the directory is too broad. An untrusted project disables the always options when saving to the project; these options have `disabled: true` and `disabledReason: "project not trusted"`.
 
 `alwaysSavedTo` maps the config's `pathAccess.alwaysScope` value `local` to `project`, and `global` to `global`.
+
+## Prompt deadline
+
+With `away.mode: "auto"`, command and path prompts have a deadline (`away.promptTimeoutMs`, default 2 minutes). Their items then carry `expiresAt`, an epoch-millisecond timestamp, so a client can show a countdown. When it passes, the prompt closes `by: "timeout"`, the session counts as away, and the action follows the away rules (it is queued or run, never answered as allow or deny by the client). Without away mode, or in `off` and `always`, items have no `expiresAt`. `"timeout"` is never an offered option.
+
+## Cards
+
+When a delegate returns a card, the `guardrails.command`, `guardrails.path` and `guardrails.inbox` views carry an optional `card`:
+
+```ts
+card?: {
+  summary: string;
+  why?: string;
+  steps?: Array<{ part: string; meaning: string }>;
+  risk?: string;
+  worthKnowing?: string;
+  category?: string;
+};
+```
+
+## Waiting items: `guardrails.inbox`
+
+In `auto` and `always`, each open waiting or urgent inbox item is parked by the session that owns it, so a client can approve it from outside the terminal. The id is the inbox item's id, and the title is `Waiting for approval: <action>`. The JSON view is:
+
+```ts
+{
+  itemId: string;
+  sessionName?: string;
+  cwd: string;
+  toolName: string;
+  action: { kind: "command"; command: string } | { kind: "file"; path: string };
+  flaggedReason: string;
+  reason: string;
+  risk: "low" | "high";
+  card?: { /* see Cards */ };
+  options: Array<{ result: "approve" | "approve-always" | "reject"; label: string }>;
+}
+```
+
+Options are `approve` (Approve once), `approve-always` (Always allow) and `reject` (Reject). Urgent items (a severe block) offer only `approve` and `reject`. `approve-always` saves a rule to the global config; if the save fails, the session shows a warning and the item stays open. A client answer is written to the inbox as the item's decision, and counts as the user being present. If the item is decided somewhere else first (the `/guardrails:inbox` view, another client), the item closes `by: "keyboard"`. If the session ends while it is open, it closes `by: "shutdown"`; the item stays in the inbox, and the session that is opened later parks it again.

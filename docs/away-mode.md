@@ -1,7 +1,7 @@
-# Away mode (design)
+# Away mode
 
-Status: agreed design, not built yet. We will adjust it based on runs that
-go wrong.
+Status: built. Opt-in: with `away.mode: "off"` (the default), Guardrails
+behaves exactly as it did before away mode existed.
 
 ## Problem
 
@@ -9,12 +9,9 @@ Guardrails can wait for a human forever. A flagged command opens a prompt
 and the agent stops until someone answers. That is fine at the keyboard and
 bad for long or overnight runs.
 
-Numbers from the local sessions (96 delegated decisions):
-
-- 82% of decisions ended as `ask`, which opens a prompt.
-- The longest wait was 12.8 hours. Several others took 2 to 3.5 hours, and
-  many took 15 to 25 minutes.
-- 93 of the 96 were `rm -rf`, mostly cleanup of the agent's own files.
+In practice, most delegated decisions end as `ask`, which opens a prompt,
+and many flagged commands are routine cleanup of the agent's own files. A
+prompt that nobody sees can hold a run for hours.
 
 ## Goal
 
@@ -23,9 +20,8 @@ decision ends in allow or block, never "wait".
 
 Non-goals:
 
-- Replacing a sandbox. A model reviewer misses things; Claude Code's own
-  reviewer misses about 1 in 6 risky actions. A sandbox is still the real
-  backstop.
+- Replacing a sandbox. A model reviewer misses things. A sandbox is still the
+  real backstop.
 - Changing behavior for users who don't turn this on. Away mode is off by
   default (`away.mode: "off"`).
 
@@ -33,8 +29,8 @@ Non-goals:
 
 ```text
 Flagged command (dangerous pattern, or outside path)
-  → SubQ decides?            yes → done
-  → Opus/Fable decides?      yes → done
+  → fast reviewer decides?       yes → done
+  → stronger reviewer decides?   yes → done
   → Both unsure:
       User present → prompt with a plain-language card (2 min limit)
                        answered → the user's choice
@@ -48,11 +44,11 @@ Around that flow:
 
 - Something clearly harmful is blocked. A severe case ends the turn at once
   and notifies the user (the tripwire).
-- After any block, the next 10 commands are also reviewed, to catch the same
-  action done another way.
+- After any block, the next `away.watchCommands` (10) commands are also
+  reviewed, to catch the same action done another way.
 - If the agent is stuck (3 blocks with nothing done in between), a
   supervisor model guides it or pauses it.
-- After 50 blocks, the run pauses.
+- After `away.maxBlocks` (50) blocks, the run pauses.
 - Every item goes into one inbox shared by all sessions on the machine. In
   the morning the user works through it, and each agent picks up from where
   it stopped.
@@ -65,8 +61,14 @@ Modes (`away.mode`):
 | `auto` | a laptop | prompts wait 2 minutes, then the user counts as away |
 | `always` | a home server | never prompts; the away rules always apply |
 
-In `auto`, runs without a terminal UI (print and JSON mode) count as away.
-In `off`, they keep today's behavior and block flagged actions.
+In `auto` and `always`, runs without a terminal UI (print and JSON mode)
+count as away. In `off`, they keep today's behavior and block flagged
+actions.
+
+Away mode applies to both gates: dangerous commands (permission-gate) and
+paths outside the workspace (path-access). The permission-gate asks about
+bash and PowerShell commands. The path-access gate handles file tools and the
+paths a bash command touches.
 
 ## Decisions
 
@@ -76,7 +78,7 @@ In `off`, they keep today's behavior and block flagged actions.
 | D2 | A prompt waits 2 minutes, then the user counts as away. | The user's choice. Long enough to notice a prompt, short enough to lose little time. |
 | D3 | The command that times out follows the away rules. It is not denied outright. | It already has both reviews. Treat it like any command that arrives while away. |
 | D4 | The models report facts: what the command does, risk, and whether it seems wanted. Guardrails code applies presence and policy. | The same answer can be reused when a prompt times out. Policy stays in reviewable code, not in a prompt. |
-| D5 | Order: fast reviewer, then strong reviewer, then the user. | Fewer prompts, and every prompt shows the strong model's explanation. Token cost is acceptable. |
+| D5 | Order: fast reviewer, then stronger reviewer, then the user. | Fewer prompts, and every prompt shows the strong model's explanation. Token cost is acceptable. |
 | D6 | Away and unsure and low risk: run it and flag it. | The user's choice. More progress overnight, and the morning review catches mistakes. |
 | D7 | "Low risk" uses a fixed checklist, and code enforces the parts it can check. | A model alone shouldn't decide what counts as safe enough to run unwatched. |
 | D8 | Away and unsure and not low risk: defer. The agent is told the action is queued. | Telling the agent the action is waiting removes the reason to look for a workaround. |
@@ -89,13 +91,15 @@ In `off`, they keep today's behavior and block flagged actions.
 | D15 | When a limit is reached, the run pauses instead of stopping. Approving an item resumes it. | The night ends as "waiting for you", not dead. |
 | D16 | Only the per-command reviewers or the user can allow an action. The ladder and the supervisor can only warn, pause, or stop. | Getting stuck must never make allowing easier. Otherwise looping or prompt injection would pay off. |
 | D17 | Every item gets a plain-language card. | The user can't read long escaped bash. The cards help the user learn alongside the system. |
-| D18 | The user writes standing permissions in plain words. The morning review suggests new ones. | The list shrinks each week. This is what scales to more agents. |
-| D19 | Core behavior goes in this package (opt-in). Models and prompts go in the user's own reviewer extension. | Model choices are personal and change often. The core stays model-agnostic. |
+| D18 | The user writes standing permissions in plain words. The inbox suggests new ones. | The list shrinks each week. This is what scales to more agents. |
+| D19 | Core behavior goes in this package (opt-in). Models and prompts go in your own delegate/advisor extension. | Model choices are personal and change often. The core stays model-agnostic. |
 | D20 | One inbox for all sessions on a machine. | The user runs 10+ sessions at once and can't track them one by one. |
 | D21 | One setting, `away.mode: off / auto / always`, in `guardrails.json`. | One value can't form an invalid combination. Same file, schema and settings screen as every other Guardrails setting. |
 | D22 | In `auto` and `always`, print and JSON runs count as away. | Nobody can answer a prompt there. |
 | D23 | Messages sent through RPC don't count as presence. | Guardrails can't tell a script from a person. A script must not be able to cancel away mode. |
 | D24 | Each session tracks presence on its own. | Simple. The cost is one 2-minute wait per session, which the user accepted. |
+| D25 | Urgent (tripwire) items offer only "approve once" and "reject", never "always allow". | One keypress must not turn a severe item into a permanent rule. |
+| D26 | A non-severe denial writes no inbox item. | The agent is told, and the `[guardrails]` session entry records it. A denial is not waiting for anyone. |
 
 ## Presence
 
@@ -108,22 +112,30 @@ always away and nothing changes it.
 | present → away | A prompt reaches its time limit; or the user runs `/guardrails:away` |
 | away → present | Any key pressed in the terminal (`ctx.ui.onTerminalInput`); a message the user typed (`input` event with `source: "interactive"`); or an answer from a pi-live client |
 
+In `always`, nothing changes presence (the user is always away). A message the
+user types still clears a pause (see "Limit and pause").
+
 Messages from other extensions (`source: "extension"`, such as pi-link) don't
 count as presence. They come from agents, not the user. Messages sent through
 RPC (`source: "rpc"`) don't count either (D23).
 
-When the user returns, the stuck and limit counters reset. Items on the list
-stay until the user handles them.
+When the user returns, the stuck and limit counters reset, and a paused run
+resumes. Items on the list stay until the user handles them. In `auto`, any
+key press or typed message makes the user present, which resumes a paused
+run. When presence doesn't change (the user was already present, or the mode
+is `always`), a typed message still clears a pause, but a key press alone
+doesn't.
 
 ## Prompt time limit
 
-- The prompt has a deadline (`away.promptTimeoutMs`, 120000 in the user's
-  config).
-- The pi-live item gets `expiresAt`, so clients can show a countdown.
+- The prompt has a deadline (`away.promptTimeoutMs`, default 120000).
+- The terminal prompt shows the time left next to its title. The pi-live
+  item gets `expiresAt`, so clients can show a countdown.
 - On timeout the prompt closes with `by: "timeout"`, the session becomes away,
   and the away rules run with the delegates' answers already collected.
 - If one tool call had several prompts queued (several outside paths), the
   rest skip their prompts and go straight to the away rules.
+- The RPC fallback (a plain select dialog) gets the same deadline.
 - The input guard still applies: a key pressed in the last second doesn't
   answer the prompt, but it does count as presence.
 
@@ -151,8 +163,15 @@ the delegates when it can check a point itself:
 
 - An action flagged by a built-in admin-rights matcher is never low risk.
 - An action that touches a file covered by a policy rule is never low risk.
+- A write outside the system temp folder is never low risk. A bash command
+  counts as a write, because it can write.
 - If no delegate reported a risk, the action is not low risk.
 - If any delegate reported high risk, the action is not low risk.
+
+The checks see through wrappers (`env sudo ...`, `xargs sudo`, `/usr/bin/sudo`)
+and parse the string passed to `sh -c` or `eval` (three levels deep). Anything
+they can't parse counts as not low risk. This can over-match, which only ever
+defers an action and never allows one.
 
 ### Messages to the agent
 
@@ -169,7 +188,10 @@ Denied:
 
 Repeat:
 
-> Already queued for the user's approval. / Already denied.
+> Already queued for the user's approval. Don't retry it; continue with other
+> work.
+
+> Already denied. Don't retry it or do the same thing another way.
 
 ## Repeats
 
@@ -180,7 +202,11 @@ Guardrails remembers each deferred or denied action for the session:
 
 A later request for the same action is blocked at once with the repeat
 message, without running delegates. A repeat doesn't count toward stuck. It
-does count toward the 50-block limit.
+does count toward the 50-block limit. A repeat also refills the watch window,
+and it adds no new entry to the blocked list.
+
+When a decision arrives for an item, the memory changes: an approval removes
+it (the exact action may run once), and a rejection makes it denied.
 
 ## Tripwire
 
@@ -193,16 +219,20 @@ On a severe block, Guardrails:
 1. Blocks the call with `terminate: true`, so the turn ends after the current
    batch.
 2. Records the item and emits `guardrails:tripwire`.
-3. Shows the item as urgent at the top of the inbox.
+3. Pauses the run (the reason is "a severe action was blocked: ...").
+4. Shows the item as urgent at the top of the inbox.
 
-For v1, the event and the inbox entry are the only notification.
+For v1, the event and the inbox entry are the only notification. Urgent items
+offer "approve once" and "reject" only (D25).
 
 This applies whether the user is present or away.
 
 ## Watch window
 
-After any block (deferred, denied or repeat), the next 10 `bash` or
-`powershell` commands go to delegates even if nothing flagged them.
+After any block (deferred, denied or repeat), the next `away.watchCommands`
+(10) `bash` or `powershell` commands go to delegates even if nothing flagged
+them. Commands that are flagged anyway also use up the window, and the
+delegates that opt in get the `watch` field on those requests too.
 
 - Only delegates that opt in (`watch: true`) receive these.
 - The request carries `watch: { blocked: [...] }`, the actions blocked so far
@@ -212,6 +242,9 @@ After any block (deferred, denied or repeat), the next 10 `bash` or
   command never opens a prompt or gets deferred.
 - A `block` here is treated as a denial and also counts toward the tripwire
   rules.
+
+A command that `permissionGate.allowSafeCleanup` exempts (see below) counts as
+unflagged, so it goes through the window like any other unflagged command.
 
 Known gap: an agent could retry after the window closes. The deferred message
 removes most of the reason to do that.
@@ -223,40 +256,55 @@ isn't blocked, whatever its exit code. Reads don't count.
 
 **Stuck:** 3 blocks (deferred or denied) with no progress between them.
 
-When stuck, Guardrails asks the registered advisor (see the contract
-changes). The advisor sees the user's requests, the agent's recent tool
-calls, and the blocked list, and answers with one of:
+When stuck, Guardrails asks the registered advisors (see the contract
+changes). An advisor receives the blocked list, the count of blocks since the
+user left, and the standing permissions; through its `context` it can read the
+session to see the user's requests and the agent's recent tool calls. It
+answers with one of:
 
-- `advise`: a message sent to the agent as a steer message.
+- `advise`: a message added to the block reason ("Supervisor: <message>").
 - `pause`: pause the run.
 
-If no advisor is registered, Guardrails sends a built-in message ("several
-actions in a row need the user's approval; continue with work that doesn't
-need them, or wrap up with a summary"). If the agent gets stuck again before
-making progress, Guardrails pauses the run.
+If any advisor pauses, the run pauses. Otherwise the advice messages are
+joined. If no advisor is registered, or none answers in time, Guardrails adds
+a built-in message to the block reason ("Several actions in a row need the
+user's approval. Continue with work that doesn't need them, or wrap up with a
+summary of what is waiting."). If the agent gets stuck again before making
+progress, Guardrails pauses the run.
 
 The advisor can't allow anything (D16).
 
 ## Limit and pause
 
-- 50 blocks since the user left pauses the run.
-- Pausing blocks the current call with `terminate: true` and adds a summary
-  to the session listing what is waiting.
+- `away.maxBlocks` (50) blocks since the user left pauses the run.
+- Pausing blocks the current call with `terminate: true` and tells the agent
+  to stop and summarize what it did and what is waiting for approval.
+- While paused, every tool call is blocked ("Guardrails paused this run until
+  the user returns. Stop and summarize."), for all tools, not just the gated
+  ones.
+- A paused run shows as blocked in Herdr (`herdr:blocked`), and the status
+  line says `paused · <n> waiting`.
 
 Resume:
 
+- The user comes back (see "Presence"), or a decision is applied that sends
+  the agent a message. Either lifts the pause and restarts the stuck and
+  limit counters.
 - Approving a waiting item (in the inbox or from pi-live) grants that exact
   action once.
-- Guardrails then sends the agent "approved: <action>; you can run it now".
-  If the agent is idle, the message starts a turn.
-- Rejecting an item sends "rejected: <action>; don't do this" when the agent
-  next runs.
+- Guardrails then sends the agent "Guardrails: the user approved this action.
+  You can run it now: <action>". If the agent is idle, the message starts a
+  turn; if it is running, the message is queued as a follow-up.
+- Rejecting an item sends "Guardrails: the user rejected this action. Don't
+  do it, or the same thing another way: <action>" the same way.
+- "Fine" and "shouldn't have run" send nothing.
 - See "Shared inbox" for how a decision reaches a session that is running
   elsewhere or has closed.
 
 ## Cards
 
-Each item gets a plain-language card, shown on the prompt and in the inbox:
+Each item can get a plain-language card, shown on the prompt, in the inbox and
+to pi-live clients:
 
 ```text
 What it wants to do   one or two sentences
@@ -264,17 +312,20 @@ Why it was stopped    the flag, in plain words
 Step by step          each part of the command, with its meaning
 Risk                  low or higher, and why
 Worth knowing         one thing the user can learn from it (optional)
+Category              a short label such as "delete build output" (optional)
 ```
 
-The strong reviewer writes the card in the same call that judges the command,
-so it costs no extra time. Without a card, the raw command and the flag
-reason are shown, as today.
+The delegate that judges the command writes the card in the same call, so it
+costs no extra time. Without a card, the raw command and the flag reason are
+shown, as today. The category groups similar actions for standing-permission
+suggestions.
 
 ## Shared inbox: `/guardrails:inbox`
 
 One inbox per machine, shared by every Pi session on it (D20). Running
-`/guardrails:inbox` in any session shows every item from every session,
-grouped by project and then session:
+`/guardrails:inbox` in any session shows every item from every session. Each
+row shows the project, session, the session's state (`running`, `idle`,
+`paused` or `closed`), the time and the action, in sections like these:
 
 ```text
 ⚠ Urgent (1)
@@ -293,22 +344,38 @@ Allowed while you were away (12)
 
 Sections:
 
-1. **Urgent:** tripwire items.
-2. **Waiting for you:** deferred items. Approve once, always allow (adds a
-   rule), or reject.
-3. **Allowed while you were away:** flagged items. Mark ✓ fine or ✗ shouldn't
-   have run.
+1. **Urgent:** tripwire items. Approve once (`a`) or reject (`r`).
+2. **Waiting for you:** deferred items. Approve once (`a`), always allow
+   (`A`, saves a rule to your global config), or reject (`r`).
+3. **Allowed while you were away:** flagged items. Mark fine (`f`) or
+   shouldn't have run (`w`).
 
-Each item opens to its card.
+`Enter` opens an item's card (the plain-language card first, then the raw
+command or path, the flag reason and the reviewers' reason). For a closed
+session the card shows the `pi --session <file>` command to reopen it. A
+footer counts the items handled in the last 24 hours. Without a terminal UI
+(RPC), the command falls back to select dialogs: pick an item, then an
+action.
+
+If two people decide the same item at once, the first decision wins and the
+other gets "Already decided." "Always allow" saves the rule first, and the
+decision is written only if the save worked. The status line shows
+`away · <n> waiting` or `paused · <n> waiting`, and just `<n> waiting` when
+you are present and something is open.
 
 ### Storage
 
-- Folder: `~/.pi/agent/guardrails/inbox/`.
+- Folder: `guardrails/inbox/` inside the Pi agent directory.
 - The session that creates an item writes `<id>.item.json`: session id,
-  session file, cwd, session name, tool call id, kind, action, flag reason,
-  card, and time.
-- A decision is written to a separate `<id>.decision.json`: approve, reject,
-  fine or shouldn't have, who decided, and when.
+  session file, cwd, session name, tool call id, kind (`waiting`, `allowed` or
+  `urgent`), cause (`away`, `timeout`, `headless` or `tripwire`), action, flag
+  reason, reviewers' reason, risk, card, and time.
+- A decision is written to a separate `<id>.decision.json`: approve,
+  approve-always, reject, fine or wrong, who decided (the inbox or a pi-live
+  client), and when. The first decision wins.
+- Each running session also writes a small status file in
+  `guardrails/sessions/`, so the inbox can show whether a session is running,
+  idle or paused.
 - Every write goes to a temp file first and is then renamed, so a reader
   never sees a half-written file. Each file has one writer, so 10+ sessions
   can write at once without locks.
@@ -317,14 +384,17 @@ Each item opens to its card.
 ### Getting a decision to its session
 
 - **Running or paused session:** it watches the folder (`fs.watch`, plus a
-  poll every few seconds as a fallback) for decisions on its own items, then
-  applies them as described under "Limit and pause".
+  poll every 5 seconds as a fallback) for decisions on its own items, then
+  applies them as described under "Limit and pause". Each session only
+  applies decisions for its own items, and records what it applied in the
+  session, so nothing is applied twice.
 - **Closed session:** the decision is kept. When the session is opened
-  again, it applies any decisions it missed. The inbox shows the command to
-  reopen the session.
+  again, it applies any decisions it missed and tells the agent on its next
+  turn. The inbox shows the command to reopen the session.
 
-Waiting items are also pi-live items, so the user can approve them from a
-phone.
+Waiting and urgent items are also pi-live items (kind `guardrails.inbox`), so
+the user can approve them from a phone. An answer from a client is written as
+a decision, counts as the user being present, and closes the item everywhere.
 
 Each machine has its own inbox. A home server's items are reviewed on the
 server.
@@ -333,8 +403,11 @@ Learning:
 
 - ✓ and approvals are confirmed false alarms. ✗ and rejections are confirmed
   catches.
-- After a repeated pattern (for example 5 approved package installs), the list
-  suggests a standing permission. The user accepts or ignores it.
+- After you decide an item from `/guardrails:inbox` (not pi-live) and a
+  category has 5 approvals or "fine" marks in the last 14 days, Guardrails asks
+  `Add standing permission: "<category>"?` once the inbox closes. Yes adds it
+  to the global `away.standingPermissions`. A "no", or a category that is
+  already a standing permission, is not asked about again in that session.
 
 ## Standing permissions
 
@@ -348,34 +421,51 @@ When I'm away, it's fine to:
 ```
 
 They are stored in config (`away.standingPermissions`) and passed to
-delegates. Delegates use them as part of what the user wants. They don't
+delegates and advisors. Delegates use them as part of what the user wants. They don't
 override the code checks in "Low risk", so `sudo` stays higher risk however
 it's worded.
 
 ## What goes where
 
-**This package (opt-in, written to upstream quality):**
+**This package (opt-in):**
 
 - the `off`, `auto` and `always` modes, presence, the prompt time limit, and
   the away rules
 - low-risk code checks
 - repeats, tripwire, watch window, stuck detection, limit, pause and resume
-- advisor hook
-- the shared inbox, cards display, and standing permissions storage
+- the advisor hook
+- the shared inbox, `/guardrails:inbox`, cards display, standing permissions
+  storage and suggestions
 - contract and event additions (below)
-- optional: auto-allow `rm -rf` when every target is a literal path inside the
-  project or the temp folder (AST-based, off by default)
+- an optional safe-cleanup rule (below)
 
-**The user's reviewer extension (`~/.pi/agent/extensions/guardrails-reviewer.ts`):**
+**Your own delegate/advisor extension:**
 
-- the SubQ then Opus/Fable chain
+- the models and prompts: which reviewers run, in what order, and what they
+  are asked
 - risk, severity and card output
 - watch-window judgement ("is this the blocked thing in disguise?")
-- the supervisor (advisor)
-- context fixes:
-  - count pi-link and other extension messages as user requests
-  - drop the agent's own text
-  - add recent tool calls (inputs only, no outputs)
+- the supervisor (an advisor)
+- the context it gives the models: for example, count messages from other
+  extensions as user requests, leave out the agent's own prose, and include
+  recent tool-call inputs (not outputs)
+
+Delegates read what the models need from `context.sessionManager`; Guardrails
+doesn't prescribe a model. `examples/delegates/classifier.ts` and
+`examples/advisors/nudge.ts` are starting points.
+
+### Safe cleanup (optional)
+
+`permissionGate.allowSafeCleanup` (default `false`). When `true`, a command
+that is made only of `rm -rf` on known build or cache directories, with plain
+relative paths strictly inside the working directory, is not flagged. For
+example `rm -rf node_modules dist`. The check is conservative. Every command
+in the line must be such an `rm`, and any of these makes it false: another
+command, a redirect, a variable or substitution, a glob, `~`, a `..` or `.git`
+segment, an absolute path, an unknown flag, a symlink that leaves the working
+directory, or anything the parser can't read with certainty. It lifts only
+the built-in `rm -rf` detection: a pattern you added yourself still flags the
+command. It works with or without away mode.
 
 ## Contract changes
 
@@ -384,8 +474,8 @@ changes.
 
 ### Config
 
-In `~/.pi/agent/extensions/guardrails.json`, or per project in
-`.pi/extensions/guardrails.json`:
+In the global `extensions/guardrails.json` in the Pi agent directory, or per
+project in `.pi/extensions/guardrails.json`:
 
 ```jsonc
 {
@@ -397,17 +487,19 @@ In `~/.pi/agent/extensions/guardrails.json`, or per project in
     "stuckBlocks": 3,
     "maxBlocks": 50,
     "standingPermissions": []  // plain-language strings
-  }
+  },
+  "permissionGate": { "allowSafeCleanup": false }
 }
 ```
 
-`delegation.timeoutMs` is capped at 60s today. A strong model that reasons
-through a command can take longer, so the cap goes up to 300s.
+`delegation.timeoutMs` used to be capped at 60s. A strong model that reasons
+through a command can take longer, so the cap is now 300s (the default stays
+10s). Set it to something like `120000` when a delegate calls a strong model.
 
 ### Delegates
 
 - `DelegateAnswer` gains optional `risk?: "low" | "high"`,
-  `severe?: boolean` (only read on `block`), and `card?: Card`.
+  `severe?: boolean` (only read on `block`), and `card?: GuardrailsCard`.
 - `DelegationRequest` gains optional `watch?: { blocked: BlockedAction[] }`
   and `standingPermissions?: string[]`.
 - `GuardrailsDelegate` gains optional `watch?: boolean`.
@@ -418,41 +510,33 @@ through a command can take longer, so the cap goes up to 300s.
 
 ### Events
 
-- `guardrails:presence:changed` `{ presence, cause }`
-- `guardrails:away:item` with the item, whenever one is added or changes state
-- `guardrails:tripwire` with the item
-- `GuardrailsBlockSource` gains `"deferred"`
-- `guardrails:prompt:closed` gains optional `by`
+- `guardrails:presence:changed` `{ presence, cause }`, with cause `timeout`,
+  `command`, `keypress`, `input` or `client`
+- `guardrails:away:item` `{ item, decision? }`, when an item is written (no
+  decision) and again when its decision is applied (with the decision)
+- `guardrails:away:paused` `{ paused, reason? }`
+- `guardrails:tripwire` `{ item }`
+- `guardrails:advisor:register` and `guardrails:advisor:request`
+- `GuardrailsBlockSource` gains `"deferred"`, `"repeat"` and `"paused"`
+- `guardrails:prompt:closed` gains optional `by`, set only in away modes
 
 ### pi-live
 
 - Items get `expiresAt` when a prompt time limit is set.
-- New close reason `by: "timeout"`.
+- New close reasons `by: "timeout"` and `by: "shutdown"`.
 - Views gain optional `card`.
-- Waiting items from the inbox are published as items.
+- Waiting and urgent items from the inbox are published as items, with kind
+  `guardrails.inbox`.
 
-`docs/decision-delegation.md`, `docs/pi-live.md`, `README.md` and
-`schema.json` get updated alongside the code.
-
-## Build steps
-
-Each step can ship alone.
-
-1. **Modes, presence, time limit, away rules.** Ends the overnight hang.
-   Includes `away.mode`, print and JSON runs counting as away, the deferred
-   message, `risk` on delegate answers, the low-risk code checks, writing
-   items to the shared inbox folder, and the pi-live `expiresAt` and
-   `timeout`.
-2. **Inbox, repeats, tripwire, stuck, limit, pause and resume.** Includes
-   `/guardrails:inbox` across sessions, getting decisions to running and
-   closed sessions, and the advisor hook with the built-in fallback message.
-3. **Reviewer upgrade (local) and watch window (core).** The two-tier
-   reviewer, risk, severity, cards, the supervisor, and the context fixes.
-4. **Cards and learning in the inbox.** Cards on items, ✓ and ✗, standing
-   permissions and suggestions, and the optional safe `rm -rf` rule.
+See also `docs/decision-delegation.md` (delegates and advisors),
+`docs/pi-live.md` and `README.md`.
 
 ## Later
 
+- Show non-severe denials in the inbox.
+- Use the command-argument read/write classification in the path-access
+  floor: today any bash call counts as a write, so a `cat /outside/file` run
+  through bash is always deferred while away.
 - Shared presence across sessions, so only one session pays the 2-minute
   wait.
 - One inbox across machines (laptop and home server).

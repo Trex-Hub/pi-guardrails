@@ -574,6 +574,9 @@ export interface ClassifierAnswer {
   verdict: ClassifierDecision["verdict"];
   reason: string;
   details: ClassifierAnswerDetails;
+  /** Away mode: only "low" can let an unsure action run while the user is away. */
+  risk?: "low" | "high";
+  card: { summary: string; why?: string; risk?: string };
 }
 
 export interface RunClassifierOptions {
@@ -639,10 +642,26 @@ export async function runClassifier(
 
   if (!chosen) return undefined;
   const prefix = refs.length > 1 ? `${chosen.model}: ` : "";
+  const impact = chosen.decision.facts.impact?.level;
   return {
     verdict: chosen.decision.verdict,
     reason: `${prefix}${chosen.decision.reason}`,
     details: { strategy: options.strategy, runs },
+    // Away mode: report risk and a card. Only "low" can let an action run
+    // while the user is away, so say "high" unless the impact is clearly small.
+    // A chat model that writes the card in the same call does this better; here
+    // the card only restates what the classifier measured.
+    ...(impact === undefined ? {} : { risk: impact < 1 ? "low" : "high" }),
+    card: {
+      summary:
+        request.action.kind === "command"
+          ? `Runs: ${request.action.command}`
+          : `Accesses: ${request.action.path}`,
+      why: request.reason,
+      ...(impact === undefined
+        ? {}
+        : { risk: `impact ${impact.toFixed(1)}/4` }),
+    },
   };
 }
 

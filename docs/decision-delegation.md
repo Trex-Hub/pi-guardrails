@@ -33,7 +33,7 @@ Merge rule:
 | every delegate allows | runs without a prompt |
 | anything else: an ask, a timeout, an error, an abstention | the usual prompt |
 
-Delegates get `delegation.timeoutMs` to answer (default 10s, capped at 60s).
+Delegates get `delegation.timeoutMs` to answer (default 10s, capped at 300s). The cap used to be 60s; a delegate that calls a strong model may need `120000` or more.
 
 When one path-access tool call touches several outside paths, each path is
 a separate decision, and all of them are delegated at once. Any block blocks
@@ -68,8 +68,8 @@ Load one with `pi -e examples/delegates/no-network.ts`.
 
 ### `decide(request, context)`
 
-Return `{ verdict: "allow" | "block" | "ask", reason }`, a promise of it, or
-`undefined` to abstain. Abstaining, throwing, or returning a malformed answer
+Return `{ verdict: "allow" | "block" | "ask", reason, risk?, severe?, card? }`,
+a promise of it, or `undefined` to abstain. Abstaining, throwing, or returning a malformed answer
 all escalate to the prompt. The `reason` is shown to the user, and to the agent
 when the action is blocked.
 
@@ -83,6 +83,8 @@ when the action is blocked.
 | `metadata` | the feature's risk metadata |
 | `toolName` | `"bash"`, `"read"`, … |
 | `input` | the raw tool input |
+| `watch` | away mode only, see [Watch requests](#watch-requests) |
+| `standingPermissions` | away mode only: the user's plain-language rules, see [Standing permissions](#standing-permissions) |
 
 `context` is a slice of Pi's extension context:
 
@@ -95,6 +97,81 @@ when the action is blocked.
 
 A delegate cannot prompt the user through this contract; it returns `ask`
 instead. It is still ordinary extension code and can use its own `pi` API.
+
+## Away mode fields
+
+These only matter when `away.mode` is `"auto"` or `"always"` (see
+[away-mode.md](away-mode.md)). Delegates that don't return them keep working.
+
+Extra fields on an answer:
+
+| field | meaning |
+|---|---|
+| `risk` | `"low"` or `"high"`. While the user is away, an `ask` (or no verdict) can run only if every delegate that reported a risk said `"low"`, at least one reported it, and Guardrails' own checks agree (admin-rights commands, policy-protected files, writes outside the temp folder and anything unparseable are never low risk). Any other value is ignored. |
+| `severe` | `true` on a `block` answer marks it as high impact and clearly outside the user's request, such as sending secrets off the machine or gaining admin rights unasked. It ends the turn, pauses the run and creates an urgent inbox item. Ignored on any other verdict. |
+| `card` | A plain-language explanation shown on the prompt, in the inbox and to pi-live clients: `{ summary, why?, steps?: { part, meaning }[], risk?, worthKnowing?, category? }`. `summary` is required; other fields are optional strings. Malformed cards are dropped. `category` is a short label such as `"delete build output"` that groups similar actions for standing-permission suggestions. |
+
+Guardrails keeps the first valid card, in roster order, from the delegates
+that answered. Delegates report facts (what it does, how risky); Guardrails
+code decides what to do with them. A risk or verdict must not depend on
+whether the user is present.
+
+### Watch requests
+
+After Guardrails blocks something in away mode, the next
+`away.watchCommands` bash or PowerShell commands (10 by default) are also
+sent to delegates, even when nothing flagged them, to catch the same action
+done another way. Only delegates with `watch: true` receive them:
+
+```ts
+const delegate = { id: "...", name: "...", watch: true, decide(request) { /* ... */ } };
+```
+
+Those requests have `request.watch = { blocked }`, the actions blocked so
+far in the session (`{ feature, toolName, action, outcome: "deferred" | "denied", reason, at }`,
+newest last, at most 20). Only `block` has an effect: `allow`, `ask`,
+abstaining, a timeout or an error all let the command run, because nothing
+flagged it, and a watched command never opens a prompt. A `block` is treated
+as a denial. Flagged commands inside the window also carry `watch`, so a
+delegate can see the earlier blocks.
+
+### Standing permissions
+
+`request.standingPermissions` is `away.standingPermissions`: plain-language
+rules the user wrote for when they are away, for example "delete anything
+inside the project folder or /tmp". Treat them as part of what the user
+wants. They never override Guardrails' own checks: `sudo` stays higher risk
+however a rule is worded.
+
+### Advisors
+
+An advisor is consulted when an away run is stuck (3 blocks in a row with no
+progress between them). It registers like a delegate, with its own events:
+
+```ts
+const advisor = {
+  id: "example:nudge",
+  name: "nudge",
+  isEnabled: () => true,   // optional
+  advise(situation, context) {
+    // situation: { reason: "stuck", blocked, blocksSinceAway, standingPermissions }
+    return { action: "advise", message: "Skip the blocked steps and summarize." };
+    // or { action: "pause", reason: "..." }, or undefined to abstain
+  },
+};
+const register = () => pi.events.emit("guardrails:advisor:register", { advisor });
+pi.events.on("guardrails:advisor:request", register);
+register();
+```
+
+`context` is the same slice the delegates get (`cwd`, `signal`,
+`sessionManager`, `modelRegistry`). All enabled advisors run in parallel under
+`delegation.timeoutMs`. If any pauses, the run pauses (the first pause reason
+in roster order wins). Otherwise the `advise` messages are joined and added to
+the block reason the agent sees. Abstaining, throwing and timing out are
+ignored; with no usable answer Guardrails sends its own nudge. An advisor can
+only warn or pause. It can never allow an action. See
+`examples/advisors/nudge.ts`.
 
 ## What the user sees
 
@@ -120,6 +197,8 @@ instead. It is still ordinary extension code and can use its own `pi` API.
 | `guardrails:delegate:request` | emitted by each feature on load |
 | `guardrails:delegate:register` | `{ delegate }`, emitted by a delegate |
 | `guardrails:decision:delegated` | the merged decision with every delegate's outcome |
+| `guardrails:advisor:request` | emitted when away mode starts asking for advisors |
+| `guardrails:advisor:register` | `{ advisor }`, emitted by an advisor |
 
 Types: `src/shared/delegation/types.ts`.
 
