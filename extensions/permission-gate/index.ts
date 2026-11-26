@@ -22,6 +22,7 @@ import {
   GUARDRAILS_PROMPT_OPENED_EVENT,
   setupLegacyPromptEventAlias,
 } from "../../src/shared/events";
+import { handleAwayToolCall, lazyAdvisors } from "./away";
 import { isCommandAllowed, saveCommandSessionGrant } from "./grants";
 import { COMMAND_OPTIONS, commandPark } from "./pi-live";
 import {
@@ -45,6 +46,7 @@ export default async function permissionGate(pi: ExtensionAPI) {
   setupLegacyPromptEventAlias(pi, "permissionGate");
   registerDecisionEntryRenderer(pi);
   const delegates = createDelegateRoster(pi);
+  const advisors = lazyAdvisors(pi);
 
   pi.on("tool_call", async (event, ctx) => {
     const config = configLoader.getConfig();
@@ -54,6 +56,20 @@ export default async function permissionGate(pi: ExtensionAPI) {
       !isToolCallEventType("powershell", event)
     )
       return;
+
+    if (config.away && config.away.mode !== "off") {
+      return handleAwayToolCall(
+        { pi, delegates, advisors },
+        {
+          toolName: event.toolName,
+          toolCallId: event.toolCallId,
+          parentToolCallId: event.parentToolCallId,
+          input: event.input,
+        },
+        ctx,
+        config,
+      );
+    }
 
     const command = event.input.command;
     const toolName = event.toolName;
