@@ -29,6 +29,7 @@ import {
   GUARDRAILS_PROMPT_CLOSED_EVENT,
   GUARDRAILS_TRIPWIRE_EVENT,
 } from "../../src/shared/events";
+import { resetTempRoots } from "./away";
 import pathAccess from "./index";
 
 const h = vi.hoisted(() => ({
@@ -168,6 +169,7 @@ async function items() {
 }
 
 beforeEach(() => {
+  resetTempRoots();
   h.away = {};
   h.mode = "ask";
   h.hasAway = true;
@@ -286,6 +288,21 @@ describe("path access, always mode", () => {
     await expect(write("/tmp/scratch/out.txt")).resolves.toBeUndefined();
     const written = await items();
     expect(written[0]).toMatchObject({ kind: "allowed" });
+  });
+
+  it("treats the realpath of a temp root as a temp dir too", async () => {
+    // macOS: /private/tmp-style roots are symlinks to their real spelling.
+    vol.mkdirSync("/realtmp/x", { recursive: true });
+    vol.mkdirSync("/private", { recursive: true });
+    vol.symlinkSync("/realtmp", "/private/tmp");
+    resetTempRoots();
+    const { write } = await setup({ decide: () => ask({ risk: "low" }) });
+    await expect(write("/realtmp/x/ok.txt")).resolves.toBeUndefined();
+    const written = await items();
+    expect(written[0]).toMatchObject({ kind: "allowed" });
+    // Still strictly inside: the root itself is not exempt.
+    const root = await write("/realtmp");
+    expect(root.block).toBe(true);
   });
 
   it("floors paths a policy rule matches to high risk", async () => {

@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import type {
@@ -110,9 +111,34 @@ interface ToolCall {
   input: Record<string, unknown>;
 }
 
+function withRealpath(dir: string): string[] {
+  try {
+    return [dir, realpathSync(dir)];
+  } catch {
+    return [dir];
+  }
+}
+
+let tempRoots: string[] | undefined;
+
+/** Temp roots in both spellings (macOS /var → /private/var), computed once. */
+function getTempRoots(): string[] {
+  tempRoots ??= [
+    ...new Set(
+      [tmpdir(), "/tmp", "/private/tmp"].flatMap((dir) => withRealpath(dir)),
+    ),
+  ];
+  return tempRoots;
+}
+
+/** Test hook: forget the cached temp roots. */
+export function resetTempRoots(): void {
+  tempRoots = undefined;
+}
+
 function isStrictlyInsideTemp(absolutePath: string): boolean {
   const target = resolve(absolutePath);
-  return [tmpdir(), "/tmp", "/private/tmp"].some((dir) => {
+  return getTempRoots().some((dir) => {
     const root = resolve(dir);
     return (
       target !== root &&
