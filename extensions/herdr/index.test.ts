@@ -7,6 +7,7 @@ import { assert, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createPromptClosedPayload,
   createPromptOpenedPayload,
+  GUARDRAILS_AWAY_PAUSED_EVENT,
   GUARDRAILS_PROMPT_CLOSED_EVENT,
   GUARDRAILS_PROMPT_OPENED_EVENT,
 } from "../../src/shared/events";
@@ -152,5 +153,56 @@ describe("herdr extension", () => {
         ([event]) => event === HERDR_BLOCKED_EVENT,
       ),
     ).toHaveLength(4);
+  });
+
+  describe("away pause", () => {
+    async function startSession() {
+      const start = registeredExtensionHandler(pi, "session_start");
+      assert(
+        typeof start === "function",
+        "session_start handler should be registered",
+      );
+      await start({ reason: "startup" }, {});
+    }
+
+    const blockedEmits = () =>
+      pi.events.emit.mock.calls
+        .filter(([event]) => event === HERDR_BLOCKED_EVENT)
+        .map(([, data]) => data);
+
+    it("maps paused true and false to Herdr blocked state", async () => {
+      await startSession();
+      pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, { paused: true });
+      pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, { paused: false });
+      expect(blockedEmits()).toEqual([
+        { active: true, label: "Guardrails paused: waiting for you" },
+        { active: false },
+      ]);
+    });
+
+    it("ignores payloads without a paused flag", async () => {
+      await startSession();
+      pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, undefined);
+      pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, {});
+      expect(blockedEmits()).toEqual([]);
+    });
+
+    it("does not double-subscribe on a second session_start and unsubscribes on shutdown", async () => {
+      await startSession();
+      await startSession();
+      pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, { paused: true });
+      expect(blockedEmits()).toHaveLength(1);
+
+      const shutdown = registeredExtensionHandler(pi, "session_shutdown");
+      assert(typeof shutdown === "function", "shutdown handler registered");
+      shutdown();
+      pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, { paused: true });
+      expect(blockedEmits()).toHaveLength(1);
+    });
+
+    it("does nothing before a session starts", () => {
+      pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, { paused: true });
+      expect(blockedEmits()).toEqual([]);
+    });
   });
 });
