@@ -120,9 +120,10 @@ export function setPresence(
   state.presence = presence;
   emitPresenceChanged(pi, presence, cause);
   if (presence === "present") {
+    // Emits paused:false only if the run was paused, so a keypress cannot
+    // clear a listener's "blocked" indicator while a prompt is still open.
+    resumeRun(pi, state);
     state.ladder.reset();
-    state.paused = undefined;
-    emitAwayPaused(pi, false);
   }
 }
 

@@ -130,6 +130,15 @@ describe("setPresence", () => {
     expect((paused[1] as { reason?: string }).reason).toBeUndefined();
   });
 
+  it("going present emits paused:false only if the run was paused", () => {
+    const { pi, bus } = fakePi();
+    const paused = collect(bus, GUARDRAILS_AWAY_PAUSED_EVENT);
+    const state = getAwayState("s1", { mode: "auto", ...base });
+    setPresence(pi, state, "away", "command");
+    setPresence(pi, state, "present", "keypress");
+    expect(paused).toEqual([]);
+  });
+
   it("going away leaves the ladder and pause alone", () => {
     const { pi } = fakePi();
     const state = getAwayState("s1", { mode: "auto", ...base });
