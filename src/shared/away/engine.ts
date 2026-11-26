@@ -188,54 +188,86 @@ export async function finishBlock(
   }
 }
 
-/**
- * The away rules for one action both reviewers were unsure about. Low risk and
- * `lowRisk: "allow"`: write an `allowed` item and let it run. Otherwise write a
- * `waiting` item, remember the action as deferred and add it to the blocked
- * list. The caller counts the ladder (once per call) and builds the block.
- */
-export async function resolveAwayDecision(
+export interface AwayDecisionParams {
+  action: Action;
+  flaggedReason: string;
+  outcomes: readonly DelegateOutcome[];
+  reason: string;
+  risk: Risk;
+  cause: AwayCause;
+}
+
+function makeDecisionItem(
   env: AwayEnv,
-  params: {
-    action: Action;
-    flaggedReason: string;
-    outcomes: readonly DelegateOutcome[];
-    reason: string;
-    risk: Risk;
-    cause: AwayCause;
-  },
-): Promise<{ kind: "allow" } | { kind: "defer"; item: InboxItem }> {
-  const { state, away } = env;
-  const card = pickCard(params.outcomes);
-  const common = {
+  params: AwayDecisionParams,
+  kind: "allowed" | "waiting",
+): InboxItem {
+  return makeItem(env, {
     cause: params.cause,
     action: params.action,
     flaggedReason: params.flaggedReason,
     reason: params.reason,
     risk: params.risk,
-    card,
-  };
-  if (params.risk === "low" && away.lowRisk === "allow") {
-    await publish(env, makeItem(env, { ...common, kind: "allowed" }));
-    state.memory.delete(actionKey(params.action));
+    card: pickCard(params.outcomes),
+    kind,
+  });
+}
+
+/**
+ * The away rules for several actions of one call, all of which both reviewers
+ * were unsure about. If none of them is deferred (every one is low risk and
+ * `lowRisk: "allow"`), write an `allowed` item for each and let the call run.
+ * Otherwise the call is blocked: write a `waiting` item for each deferred
+ * action (and no `allowed` items, those actions didn't run), remember them as
+ * deferred and add them to the blocked list. The caller counts the ladder (once
+ * per call) and builds the block.
+ */
+export async function resolveAwayDecisions(
+  env: AwayEnv,
+  list: readonly AwayDecisionParams[],
+): Promise<{ kind: "allow" } | { kind: "defer"; items: InboxItem[] }> {
+  const { state, away } = env;
+  const isAllowed = (params: AwayDecisionParams) =>
+    params.risk === "low" && away.lowRisk === "allow";
+  const deferred = list.filter((params) => !isAllowed(params));
+
+  if (deferred.length === 0) {
+    for (const params of list) {
+      await publish(env, makeDecisionItem(env, params, "allowed"));
+      state.memory.delete(actionKey(params.action));
+    }
     return { kind: "allow" };
   }
 
-  const item = makeItem(env, { ...common, kind: "waiting" });
-  await publish(env, item);
-  state.memory.set(actionKey(params.action), {
-    outcome: "deferred",
-    itemId: item.id,
-  });
-  recordBlockedAction(state, {
-    feature: env.feature,
-    toolName: env.toolName,
-    action: params.action,
-    outcome: "deferred",
-    reason: params.flaggedReason,
-  });
+  const items: InboxItem[] = [];
+  for (const params of deferred) {
+    const item = makeDecisionItem(env, params, "waiting");
+    await publish(env, item);
+    items.push(item);
+    state.memory.set(actionKey(params.action), {
+      outcome: "deferred",
+      itemId: item.id,
+    });
+    recordBlockedAction(state, {
+      feature: env.feature,
+      toolName: env.toolName,
+      action: params.action,
+      outcome: "deferred",
+      reason: params.flaggedReason,
+    });
+  }
   state.watchRemaining = away.watchCommands;
-  return { kind: "defer", item };
+  return { kind: "defer", items };
+}
+
+/** The away rules for one action. See `resolveAwayDecisions`. */
+export async function resolveAwayDecision(
+  env: AwayEnv,
+  params: AwayDecisionParams,
+): Promise<{ kind: "allow" } | { kind: "defer"; item: InboxItem }> {
+  const result = await resolveAwayDecisions(env, [params]);
+  if (result.kind === "allow") return result;
+  return { kind: "defer", item: result.items[0] };
 }
 
 /**
