@@ -36,6 +36,7 @@
     "README.md",
     "schema.json",
     "!src/**/*.test.ts",
+    "!src/**/test-utils.ts",
     "!extensions/**/*.test.ts"
   ],
   "dependencies": {
