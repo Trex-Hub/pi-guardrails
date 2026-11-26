@@ -375,3 +375,52 @@ describe("createPathAccessPromptComponent", () => {
     });
   });
 });
+
+describe("away extras", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function mountWith(extra: {
+    expiresAt?: number;
+    card?: { summary: string };
+  }) {
+    const component = createPathAccessPromptComponent(
+      "read",
+      "/outside/secret.txt",
+      "/outside",
+      "/workspace",
+      true,
+      extra,
+    )(
+      { terminal: { columns: 100 }, requestRender: vi.fn() },
+      theme,
+      undefined,
+      vi.fn(),
+    );
+    return component;
+  }
+
+  it("shows the time left and ticks down", () => {
+    vi.useFakeTimers();
+    const component = mountWith({ expiresAt: Date.now() + 90_000 });
+    expect(component.render(100).join("\n")).toContain("1:30 left");
+    vi.advanceTimersByTime(31_000);
+    expect(component.render(100).join("\n")).toContain("0:59 left");
+    component.dispose();
+  });
+
+  it("shows nothing extra without extras", () => {
+    const text = mountWith({}).render(100).join("\n");
+    expect(text).not.toContain("left");
+    expect(text).not.toContain("What it wants to do");
+  });
+
+  it("shows the card", () => {
+    const text = mountWith({ card: { summary: "Reads a log file" } })
+      .render(100)
+      .join("\n");
+    expect(text).toContain("What it wants to do");
+    expect(text).toContain("Reads a log file");
+  });
+});

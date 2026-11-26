@@ -8,6 +8,8 @@ import {
   Text,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import type { GuardrailsCard } from "../../src/core/delegation";
+import { cardLines, formatRemaining } from "../../src/shared/away/card";
 import { createInputGuard } from "../../src/shared/input-guard";
 
 // Grant result type from the UI prompt
@@ -180,6 +182,9 @@ export function createPathAccessPromptComponent(
     dirGrantable?: boolean;
     alwaysEnabled?: boolean;
     inputGuardMs?: number;
+    /** Epoch ms when the prompt times out; shown as a countdown next to the title. */
+    expiresAt?: number;
+    card?: GuardrailsCard;
   } = {},
 ) {
   return (
@@ -213,13 +218,15 @@ export function createPathAccessPromptComponent(
       ? normalizeCommand(opts.command)
       : "";
 
-    container.addChild(
-      new Text(
-        theme.fg("warning", theme.bold("Outside Workspace Access")),
-        1,
-        0,
-      ),
-    );
+    const title = new Text("", 1, 0);
+    const titleText = () => {
+      const base = theme.fg("warning", theme.bold("Outside Workspace Access"));
+      if (opts.expiresAt === undefined) return base;
+      const left = formatRemaining(opts.expiresAt - Date.now());
+      return `${base}${theme.fg("dim", ` · ${left} left`)}`;
+    };
+    title.setText(titleText());
+    container.addChild(title);
     container.addChild(new Spacer(1));
     container.addChild(
       new Text(
@@ -247,6 +254,12 @@ export function createPathAccessPromptComponent(
     container.addChild(
       new Text(theme.fg("dim", `  Dir:  ${displayDir}`), 1, 0),
     );
+    if (opts.card) {
+      container.addChild(new Spacer(1));
+      container.addChild(
+        new Text(cardLines(opts.card, theme).join("\n"), 1, 0),
+      );
+    }
     container.addChild(new Spacer(1));
 
     const optionList: Component = {
@@ -295,8 +308,20 @@ export function createPathAccessPromptComponent(
       requestRender();
     };
 
+    const ticker =
+      opts.expiresAt === undefined
+        ? undefined
+        : setInterval(() => {
+            title.setText(titleText());
+            requestRender();
+          }, 1000);
+
     return {
+      dispose: () => {
+        if (ticker) clearInterval(ticker);
+      },
       render: (width: number) => {
+        if (opts.expiresAt !== undefined) title.setText(titleText());
         const innerWidth = Math.max(1, width - 2);
         const contentWidth = Math.max(1, width - 4);
         const textContentWidth = Math.max(1, contentWidth - 2);
