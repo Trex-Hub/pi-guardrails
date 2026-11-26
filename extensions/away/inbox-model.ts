@@ -95,7 +95,10 @@ export function decisionForKey(
     return undefined;
   }
   if (key === "a") return "approve";
-  if (key === "A") return "approve-always";
+  // Urgent items never offer "always": one keypress must not turn a severe
+  // action into a permanent allow rule.
+  if (key === "A")
+    return row.section === "urgent" ? undefined : "approve-always";
   if (key === "r") return "reject";
   return undefined;
 }

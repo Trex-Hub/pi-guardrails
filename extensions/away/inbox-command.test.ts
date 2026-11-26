@@ -134,6 +134,23 @@ describe("/guardrails:inbox", () => {
     expect(t.notify).toHaveBeenCalledWith("Rejected.", "info");
   });
 
+  it("rpc: urgent items offer approve once and reject only", async () => {
+    h.mode = "auto";
+    await writeItem(item("one", { kind: "urgent" }));
+    const t = setup("rpc");
+    t.select
+      .mockImplementationOnce(
+        async (_t: string, options: string[]) => options[0],
+      )
+      .mockImplementationOnce(async (_t: string, options: string[]) => {
+        expect(options).toEqual(["Show details", "Approve once", "Reject"]);
+        return "Approve once";
+      });
+    await t.run();
+    const stored = await readDecisions(["one"]);
+    expect(stored[0]?.decision).toBe("approve");
+  });
+
   it("rpc: allowed items offer fine and shouldn't-have-run", async () => {
     h.mode = "auto";
     await writeItem(item("one", { kind: "allowed" }));

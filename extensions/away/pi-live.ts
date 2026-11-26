@@ -9,6 +9,13 @@ export const INBOX_OPTIONS = [
   { result: "reject", label: "Reject" },
 ] as const;
 
+/** Urgent items never offer "always allow". */
+export function optionsFor(item: InboxItem) {
+  return item.kind === "urgent"
+    ? INBOX_OPTIONS.filter((o) => o.result !== "approve-always")
+    : INBOX_OPTIONS;
+}
+
 export type InboxAnswer = (typeof INBOX_OPTIONS)[number]["result"];
 
 export interface InboxTicket {
@@ -30,6 +37,7 @@ export function parkInboxItem(
   onAnswer: (answer: InboxAnswer, client: PiLiveClient | undefined) => void,
 ): InboxTicket {
   let closedOutside = false;
+  const options = optionsFor(item);
   const park = parkPrompt<InboxAnswer>({
     events: pi.events,
     id: item.id,
@@ -47,9 +55,9 @@ export function parkInboxItem(
       reason: item.reason,
       risk: item.risk,
       ...(item.card ? { card: item.card } : {}),
-      options: INBOX_OPTIONS,
+      options,
     },
-    options: INBOX_OPTIONS,
+    options,
     onResult: (answer) => {
       if (closedOutside) return;
       onAnswer(answer, park.outcome().client);

@@ -132,14 +132,20 @@ describe("decisionForKey", () => {
   const urgent = { section: "urgent" } as InboxRow;
   const allowed = { section: "allowed" } as InboxRow;
 
-  it("maps waiting and urgent keys", () => {
-    for (const row of [waiting, urgent]) {
-      expect(decisionForKey(row, "a")).toBe("approve");
-      expect(decisionForKey(row, "A")).toBe("approve-always");
-      expect(decisionForKey(row, "r")).toBe("reject");
-      expect(decisionForKey(row, "f")).toBeUndefined();
-      expect(decisionForKey(row, "w")).toBeUndefined();
-    }
+  it("maps waiting keys", () => {
+    expect(decisionForKey(waiting, "a")).toBe("approve");
+    expect(decisionForKey(waiting, "A")).toBe("approve-always");
+    expect(decisionForKey(waiting, "r")).toBe("reject");
+    expect(decisionForKey(waiting, "f")).toBeUndefined();
+    expect(decisionForKey(waiting, "w")).toBeUndefined();
+  });
+
+  it("urgent items offer only approve once and reject, never always allow", () => {
+    expect(decisionForKey(urgent, "a")).toBe("approve");
+    expect(decisionForKey(urgent, "r")).toBe("reject");
+    expect(decisionForKey(urgent, "A")).toBeUndefined();
+    expect(decisionForKey(urgent, "f")).toBeUndefined();
+    expect(decisionForKey(urgent, "w")).toBeUndefined();
   });
 
   it("maps allowed keys", () => {

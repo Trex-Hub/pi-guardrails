@@ -6,7 +6,15 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { vol } from "memfs";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  assert,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { actionKey } from "../../src/core/away";
 import {
   type InboxDecision,
@@ -826,6 +834,26 @@ describe("away extension", () => {
           ],
         },
       });
+    });
+
+    it("urgent items are offered without always allow and refuse it", async () => {
+      await writeItem(item("u1", { kind: "urgent" }));
+      await writeItem(item("w1"));
+      const harness = await start();
+      const urgent = harness.parked.find((p) => p.request.id === "u1");
+      const waiting = harness.parked.find((p) => p.request.id === "w1");
+      assert(urgent && waiting, "both items parked");
+      const results = (p: typeof urgent) =>
+        (p.request.view as { options: Array<{ result: string }> }).options.map(
+          (o) => o.result,
+        );
+      expect(results(urgent)).toEqual(["approve", "reject"]);
+      expect(results(waiting)).toEqual(["approve", "approve-always", "reject"]);
+      const refused = answer(urgent, "approve-always");
+      expect(refused).toMatchObject({ status: "invalid" });
+      await vi.advanceTimersByTimeAsync(300);
+      const stored = await readDecisions(["u1"]);
+      expect(stored).toEqual([]);
     });
 
     it("parks a new item written by this session, not by another", async () => {

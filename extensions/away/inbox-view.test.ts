@@ -212,6 +212,21 @@ describe("inbox view", () => {
     ]);
   });
 
+  it("A on an urgent row does nothing and its help does not offer it", async () => {
+    const t = setup([row("one", { section: "urgent" })]);
+    await settle();
+    t.view.handleInput("A");
+    await settle();
+    expect(t.act).not.toHaveBeenCalled();
+    const out = t.text();
+    expect(out).toContain("a: approve once");
+    expect(out).toContain("r: reject");
+    expect(out).not.toContain("always allow");
+    t.view.handleInput("a");
+    await settle();
+    expect(t.act.mock.calls.map((c) => c[1])).toEqual(["approve"]);
+  });
+
   it("f and w on an allowed row; a does nothing", async () => {
     const t = setup([row("one", { section: "allowed" })]);
     await settle();

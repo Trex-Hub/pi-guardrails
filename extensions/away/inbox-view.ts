@@ -87,7 +87,9 @@ function keysHelp(row: InboxRow | undefined, detail: boolean): string {
   if (row?.section === "allowed") {
     parts.push("f: fine", "w: shouldn't have run");
   } else if (row) {
-    parts.push("a: approve once", "A: always allow", "r: reject");
+    parts.push("a: approve once");
+    if (row.section !== "urgent") parts.push("A: always allow");
+    parts.push("r: reject");
   }
   if (!detail) parts.push("↑/↓: select", "enter: details");
   parts.push(detail ? "esc: back" : "esc: close");
