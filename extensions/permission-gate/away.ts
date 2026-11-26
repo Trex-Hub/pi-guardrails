@@ -57,6 +57,7 @@ import {
   formatAutoDenyReason,
   matchCommandPattern,
 } from "./rules";
+import { isExemptSafeCleanup } from "./safe-cleanup";
 
 type ConfirmResult = "allow" | "allow-session" | "deny" | "stop" | "timeout";
 
@@ -271,7 +272,10 @@ export async function handleAwayToolCall(
       useBuiltinMatchers: config.permissionGate.useBuiltinMatchers,
     }),
   ]);
-  if (safety.kind === "safe") {
+  if (
+    safety.kind === "safe" ||
+    isExemptSafeCleanup(config.permissionGate, command, ctx.cwd)
+  ) {
     if (state.watchRemaining <= 0) return;
     state.watchRemaining -= 1;
     const watched = await delegateDecision(

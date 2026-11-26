@@ -183,6 +183,12 @@ export interface GuardrailsConfig {
     customPatterns?: DangerousPattern[];
     /** When true, prompt before running dangerous commands. When false, only warn. */
     requireConfirmation?: boolean;
+    /**
+     * When true, a command made only of `rm -rf` on known build or cache
+     * directories (node_modules, dist, build, ...) strictly inside the working
+     * directory is not flagged. Default false.
+     */
+    allowSafeCleanup?: boolean;
     /** Command patterns that bypass dangerous command prompts. */
     allowedPatterns?: PatternConfig[];
     /** Command patterns that are always blocked without prompting. */
@@ -221,6 +227,7 @@ export interface ResolvedConfig {
      *  Set to false when customPatterns replaces the defaults. */
     useBuiltinMatchers: boolean;
     requireConfirmation: boolean;
+    allowSafeCleanup: boolean;
     allowedPatterns: PatternConfig[];
     autoDenyPatterns: PatternConfig[];
   };

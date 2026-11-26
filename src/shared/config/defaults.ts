@@ -129,6 +129,7 @@ export const DEFAULT_CONFIG: ResolvedConfig = {
     ],
     useBuiltinMatchers: true,
     requireConfirmation: true,
+    allowSafeCleanup: false,
     allowedPatterns: [],
     autoDenyPatterns: [],
   },

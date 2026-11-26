@@ -146,6 +146,10 @@
               "type": "boolean",
               "description": "When true, prompt before running dangerous commands. When false, only warn."
             },
+            "allowSafeCleanup": {
+              "type": "boolean",
+              "description": "When true, a command made only of `rm -rf` on known build or cache directories (node_modules, dist, build, ...) strictly inside the working directory is not flagged. Default false."
+            },
             "allowedPatterns": {
               "type": "array",
               "items": {

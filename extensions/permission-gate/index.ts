@@ -31,6 +31,7 @@ import {
   formatAutoDenyReason,
   matchCommandPattern,
 } from "./rules";
+import { isExemptSafeCleanup } from "./safe-cleanup";
 
 type ConfirmResult = "allow" | "allow-session" | "deny" | "stop";
 
@@ -106,7 +107,11 @@ export default async function permissionGate(pi: ExtensionAPI) {
         useBuiltinMatchers: config.permissionGate.useBuiltinMatchers,
       }),
     ]);
-    if (safety.kind === "safe") return;
+    if (
+      safety.kind === "safe" ||
+      isExemptSafeCleanup(config.permissionGate, command, ctx.cwd)
+    )
+      return;
 
     emitRiskDetected(pi, {
       feature: "permissionGate",
