@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type InboxItem,
   inboxDir,
@@ -8,23 +8,26 @@ import {
   writeDecision,
   writeItem,
 } from "../../src/shared/away/inbox";
-import type { ResolvedConfig } from "../../src/shared/config";
+import { configLoader, type ResolvedConfig } from "../../src/shared/config";
 import { registerInboxCommand, resultMessage } from "./inbox-command";
+import { resetSuggestions } from "./suggest";
 
 const h = vi.hoisted(() => ({
   mode: "auto" as "off" | "auto" | "always",
   enabled: true,
+  standing: [] as string[],
+  raw: null as Record<string, unknown> | null,
 }));
 
 vi.mock("../../src/shared/config", () => ({
   configLoader: {
-    getRawConfig: vi.fn(() => null),
+    getRawConfig: vi.fn(() => h.raw),
     save: vi.fn(async () => undefined),
     getConfig: vi.fn(
       () =>
         ({
           enabled: h.enabled,
-          away: { mode: h.mode },
+          away: { mode: h.mode, standingPermissions: h.standing },
         }) as unknown as ResolvedConfig,
     ),
   },
@@ -65,18 +68,26 @@ function setup(mode: string) {
   const notify = vi.fn();
   const select = vi.fn();
   const custom = vi.fn();
+  const confirm = vi.fn(async () => false);
   const ctx = {
     mode,
-    ui: { notify, select, custom },
+    ui: { notify, select, custom, confirm },
     sessionManager: { getSessionId: () => "viewer" },
   };
   return {
     notify,
     select,
     custom,
+    confirm,
     run: () => handler?.("", ctx) as Promise<void>,
   };
 }
+
+beforeEach(() => {
+  h.standing = [];
+  h.raw = null;
+  resetSuggestions();
+});
 
 describe("/guardrails:inbox", () => {
   it("in off mode only notifies and creates nothing", async () => {
@@ -234,5 +245,189 @@ describe("resultMessage", () => {
     expect(resultMessage({ status: "write-failed" }, "reject")).toContain(
       "Could not",
     );
+  });
+});
+
+describe("standing-permission suggestion", () => {
+  const CATEGORY = "delete build output";
+  const card = { summary: "Deletes build output", category: CATEGORY };
+
+  /** `count` earlier approvals of the category plus one open item "open". */
+  async function seed(count: number, decision = "fine", daysAgo = 1) {
+    for (let i = 0; i < count; i++) {
+      await writeItem(
+        item(`old${i}`, {
+          kind: "allowed",
+          card,
+          session: { id: "s0", cwd: "/w" },
+        }),
+      );
+      await writeDecision({
+        version: 1,
+        id: `old${i}`,
+        decision: decision as "fine",
+        decidedAt: new Date(Date.now() - daysAgo * 86_400_000).toISOString(),
+        decidedBy: { kind: "inbox", sessionId: "x" },
+      });
+    }
+    await writeItem(item("open", { card }));
+  }
+
+  function pickOpenThen(t: ReturnType<typeof setup>, action: string) {
+    t.select
+      .mockImplementationOnce(
+        async (_t: string, options: string[]) => options[0],
+      )
+      .mockImplementationOnce(async () => action);
+  }
+
+  it("asks after the 5th approval and saves to the global config on yes", async () => {
+    await seed(4);
+    h.raw = {
+      away: { mode: "auto", standingPermissions: ["other"] },
+      enabled: true,
+    };
+    const t = setup("rpc");
+    t.confirm.mockResolvedValueOnce(true);
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    expect(t.confirm).toHaveBeenCalledTimes(1);
+    expect(t.confirm).toHaveBeenCalledWith(
+      expect.any(String),
+      `Add standing permission: "${CATEGORY}"?`,
+    );
+    expect(configLoader.save).toHaveBeenCalledWith("global", {
+      enabled: true,
+      away: { mode: "auto", standingPermissions: ["other", CATEGORY] },
+    });
+  });
+
+  it("does not ask below 5, for rejects, for old approvals or when already standing", async () => {
+    await seed(3);
+    let t = setup("rpc");
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    expect(t.confirm).not.toHaveBeenCalled();
+
+    // 4 earlier + a reject: not a positive decision.
+    await seed(4);
+    resetSuggestions();
+    t = setup("rpc");
+    await writeItem(item("open2", { card }));
+    pickOpenThen(t, "Reject");
+    await t.run();
+    expect(t.confirm).not.toHaveBeenCalled();
+  });
+
+  it("does not count approvals older than 14 days", async () => {
+    await seed(4, "fine", 15);
+    const t = setup("rpc");
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    expect(t.confirm).not.toHaveBeenCalled();
+  });
+
+  it("does not ask when the category is already a standing permission", async () => {
+    await seed(4);
+    h.standing = [CATEGORY];
+    const t = setup("rpc");
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    expect(t.confirm).not.toHaveBeenCalled();
+  });
+
+  it("ignores items without a category", async () => {
+    for (let i = 0; i < 6; i++) {
+      await writeItem(item(`n${i}`, { kind: "allowed" }));
+      await writeDecision({
+        version: 1,
+        id: `n${i}`,
+        decision: "fine",
+        decidedAt: new Date().toISOString(),
+        decidedBy: { kind: "inbox", sessionId: "x" },
+      });
+    }
+    await writeItem(item("open"));
+    const t = setup("rpc");
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    expect(t.confirm).not.toHaveBeenCalled();
+  });
+
+  it("tells the user when saving the standing permission fails", async () => {
+    await seed(4);
+    vi.mocked(configLoader.save).mockRejectedValueOnce(new Error("disk full"));
+    const t = setup("rpc");
+    t.confirm.mockResolvedValueOnce(true);
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    expect(
+      t.notify.mock.calls.some(([m]) => String(m).includes("disk full")),
+    ).toBe(true);
+  });
+
+  it("a no is not asked again for that category this session", async () => {
+    await seed(4);
+    const t = setup("rpc");
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    expect(t.confirm).toHaveBeenCalledTimes(1);
+    expect(configLoader.save).not.toHaveBeenCalled();
+
+    await writeItem(item("open3", { card }));
+    const again = setup("rpc");
+    pickOpenThen(again, "Approve once");
+    await again.run();
+    expect(again.confirm).not.toHaveBeenCalled();
+  });
+
+  it("asks again in another session", async () => {
+    await seed(4);
+    const t = setup("rpc");
+    pickOpenThen(t, "Approve once");
+    await t.run();
+    resetSuggestions();
+    await writeItem(item("open4", { card }));
+    const next = setup("rpc");
+    pickOpenThen(next, "Approve once");
+    await next.run();
+    expect(next.confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("tui: asks only after the inbox view has closed", async () => {
+    await seed(4);
+    const t = setup("tui");
+    const order: string[] = [];
+    t.confirm.mockImplementationOnce(async () => {
+      order.push("confirm");
+      return false;
+    });
+    t.custom.mockImplementationOnce(async (factory: unknown) => {
+      const make = factory as (
+        tui: unknown,
+        theme: unknown,
+        kb: unknown,
+        done: () => void,
+      ) => { handleInput(data: string): void };
+      const theme = {
+        fg: (_c: string, x: string) => x,
+        bold: (x: string) => x,
+      };
+      let finished: () => void = () => undefined;
+      const closed = new Promise<void>((resolve) => {
+        finished = resolve;
+      });
+      const view = make({ requestRender: () => undefined }, theme, {}, () => {
+        order.push("closed");
+        finished();
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      view.handleInput("a");
+      await new Promise((r) => setTimeout(r, 20));
+      view.handleInput("\u001b");
+      await closed;
+    });
+    await t.run();
+    expect(order).toEqual(["closed", "confirm"]);
   });
 });

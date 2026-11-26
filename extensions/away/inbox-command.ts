@@ -6,6 +6,11 @@ import { configLoader } from "../../src/shared/config";
 import { type DecideResult, type DecisionKind, decide } from "./decide";
 import { decisionForKey, type InboxRow, loadInbox } from "./inbox-model";
 import { createInboxView, detailLines, rowText } from "./inbox-view";
+import {
+  addStandingPermission,
+  isPositiveDecision,
+  shouldSuggest,
+} from "./suggest";
 
 const OFF_NOTICE =
   'Away mode is off. Set away.mode to "auto" in guardrails.json.';
@@ -82,12 +87,39 @@ export function registerInboxCommand(pi: ExtensionAPI): void {
         return;
       }
       const sessionId = ctx.sessionManager.getSessionId();
+      // Suggestions wait until the inbox view is closed: a confirm cannot open on top of it.
+      const suggestions: string[] = [];
       const act = async (row: InboxRow, decision: DecisionKind) => {
         const result = await decide(row.item, decision, {
           kind: "inbox",
           sessionId,
         });
+        if (result.status === "decided" && isPositiveDecision(decision)) {
+          const category = row.item.card?.category?.trim();
+          const suggest = category
+            ? await shouldSuggest(sessionId, category)
+            : false;
+          if (category && suggest) suggestions.push(category);
+        }
         return resultMessage(result, decision);
+      };
+      const askSuggestions = async () => {
+        for (const category of suggestions.splice(0)) {
+          const yes = await ctx.ui.confirm(
+            "Standing permission",
+            `Add standing permission: "${category}"?`,
+          );
+          if (!yes) continue;
+          try {
+            await addStandingPermission(category);
+            ctx.ui.notify(`Added standing permission: "${category}".`, "info");
+          } catch (error) {
+            ctx.ui.notify(
+              `Could not save the standing permission: ${error instanceof Error ? error.message : String(error)}`,
+              "warning",
+            );
+          }
+        }
       };
       if (ctx.mode !== "tui") {
         const snapshot = await loadInbox();
@@ -96,6 +128,7 @@ export function registerInboxCommand(pi: ExtensionAPI): void {
           return;
         }
         await selectFallback(ctx, snapshot.rows, act);
+        await askSuggestions();
         return;
       }
       await ctx.ui.custom<undefined>((tui, theme, _kb, done) =>
@@ -107,6 +140,7 @@ export function registerInboxCommand(pi: ExtensionAPI): void {
           act,
         }),
       );
+      await askSuggestions();
     },
   });
 }
