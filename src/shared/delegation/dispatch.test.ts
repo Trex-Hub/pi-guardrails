@@ -409,3 +409,48 @@ describe("runDelegates answer extras", () => {
     });
   });
 });
+
+describe("delegateDecision watchOnly", () => {
+  const ctx = { ...sessionCtx } as never;
+
+  it("asks only delegates with watch: true and still records the decision", async () => {
+    const { pi, appendEntry } = fakePi();
+    const normal = vi.fn(() => ({ verdict: "allow" as const, reason: "n" }));
+    const watcher = vi.fn(() => ({ verdict: "block" as const, reason: "w" }));
+    registerDelegate(pi, delegate("normal", normal));
+    registerDelegate(pi, delegate("watcher", watcher, { watch: true }));
+    const roster = createDelegateRoster(pi);
+
+    const decision = await delegateDecision(pi, roster, request, ctx, {
+      timeoutMs: 1000,
+      watchOnly: true,
+    });
+
+    expect(normal).not.toHaveBeenCalled();
+    expect(watcher).toHaveBeenCalledOnce();
+    expect(decision?.verdict).toBe("block");
+    expect(appendEntry).toHaveBeenCalledWith(
+      DELEGATION_ENTRY_TYPE,
+      expect.objectContaining({ verdict: "block" }),
+    );
+  });
+
+  it("returns undefined when no delegate watches, and asks everyone otherwise", async () => {
+    const { pi } = fakePi();
+    const normal = vi.fn(() => ({ verdict: "allow" as const, reason: "n" }));
+    registerDelegate(pi, delegate("normal", normal));
+    const roster = createDelegateRoster(pi);
+
+    const none = await delegateDecision(pi, roster, request, ctx, {
+      timeoutMs: 1000,
+      watchOnly: true,
+    });
+    expect(none).toBeUndefined();
+    expect(normal).not.toHaveBeenCalled();
+
+    const all = await delegateDecision(pi, roster, request, ctx, {
+      timeoutMs: 1000,
+    });
+    expect(all?.verdict).toBe("allow");
+  });
+});

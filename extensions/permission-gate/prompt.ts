@@ -9,6 +9,8 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import type { GuardrailsCard } from "../../src/core/delegation";
+import { cardLines, formatRemaining } from "../../src/shared/away/card";
 import { createInputGuard } from "../../src/shared/input-guard";
 
 interface MinimalTheme {
@@ -100,6 +102,11 @@ export function createPermissionGateConfirmComponent(
   command: string,
   description: string,
   inputGuardMs?: number,
+  extra: {
+    /** Epoch ms when the prompt times out; shown as a countdown next to the title. */
+    expiresAt?: number;
+    card?: GuardrailsCard;
+  } = {},
 ) {
   return (
     tui: { terminal: { rows: number; columns: number }; requestRender(): void },
@@ -118,13 +125,15 @@ export function createPermissionGateConfirmComponent(
     let scrollOffset = 0;
 
     container.addChild(new DynamicBorder(redBorder));
-    container.addChild(
-      new Text(
-        theme.fg("error", theme.bold("Dangerous Command Detected")),
-        1,
-        0,
-      ),
-    );
+    const title = new Text("", 1, 0);
+    const titleText = () => {
+      const base = theme.fg("error", theme.bold("Dangerous Command Detected"));
+      if (extra.expiresAt === undefined) return base;
+      const left = formatRemaining(extra.expiresAt - Date.now());
+      return `${base}${theme.fg("dim", ` · ${left} left`)}`;
+    };
+    title.setText(titleText());
+    container.addChild(title);
     container.addChild(new Spacer(1));
     container.addChild(
       new Text(
@@ -140,6 +149,12 @@ export function createPermissionGateConfirmComponent(
     container.addChild(commandText);
     const commandBottomBorder = new Text("", 0, 0);
     container.addChild(commandBottomBorder);
+    if (extra.card) {
+      container.addChild(new Spacer(1));
+      container.addChild(
+        new Text(cardLines(extra.card, theme).join("\n"), 1, 0),
+      );
+    }
     container.addChild(new Spacer(1));
     container.addChild(new Text(theme.fg("text", "Allow execution?"), 1, 0));
     container.addChild(new Spacer(1));
@@ -155,8 +170,20 @@ export function createPermissionGateConfirmComponent(
     );
     container.addChild(new DynamicBorder(redBorder));
 
+    const ticker =
+      extra.expiresAt === undefined
+        ? undefined
+        : setInterval(() => {
+            title.setText(titleText());
+            tui.requestRender();
+          }, 1000);
+
     return {
+      dispose: () => {
+        if (ticker) clearInterval(ticker);
+      },
       render: (width: number) => {
+        if (extra.expiresAt !== undefined) title.setText(titleText());
         const contentWidth = Math.max(1, width - 4);
         const {
           maxScrollOffset,

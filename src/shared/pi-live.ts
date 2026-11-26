@@ -39,6 +39,8 @@ export function parkPrompt<T extends string>(params: {
   kind: "guardrails.command" | "guardrails.path";
   title: string;
   view: unknown;
+  /** Epoch ms after which the prompt closes by itself. Lets clients show a countdown. */
+  expiresAt?: number;
   options: readonly ParkOption<T>[];
   onResult(result: T): void;
 }) {
@@ -74,6 +76,9 @@ export function parkPrompt<T extends string>(params: {
       kind: params.kind,
       title: params.title,
       view: params.view,
+      ...(params.expiresAt !== undefined
+        ? { expiresAt: params.expiresAt }
+        : {}),
       answer(raw, from) {
         if (!open) return { status: "invalid", reason: "not open" };
         if (
@@ -115,6 +120,10 @@ export function parkPrompt<T extends string>(params: {
   return {
     keyboard: (result: T) => finish(result, { by: "keyboard" }),
     abort: (result: T) => finish(result, { by: "abort" }),
+    /** Closes the ticket with `{ by: "timeout" }`. `result` is internal and never offered to clients. */
+    timeout: (result: T) => finish(result, { by: "timeout" }),
+    /** How the prompt closed (or will close). */
+    closedBy: () => outcome.by,
     dispose,
   };
 }

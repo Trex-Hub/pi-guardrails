@@ -142,9 +142,15 @@ export async function delegateDecision(
   roster: DelegateRoster,
   request: DelegationRequest,
   ctx: DelegationCtx,
-  options: { timeoutMs: number },
+  options: {
+    timeoutMs: number;
+    /** Only ask delegates that opted in with `watch: true`. */
+    watchOnly?: boolean;
+  },
 ): Promise<DelegatedDecision | undefined> {
-  const delegates = roster.list();
+  const delegates = options.watchOnly
+    ? roster.list().filter((delegate) => delegate.watch === true)
+    : roster.list();
   if (delegates.length === 0) return undefined;
 
   const startedAt = performance.now();
