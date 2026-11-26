@@ -11,6 +11,7 @@ import {
   prune,
   publishItem,
   readDecisions,
+  readItem,
   readItems,
   readSessionStatuses,
   removeSessionStatus,
@@ -119,6 +120,31 @@ describe("items and decisions", () => {
     expect(onlyB).toEqual([rejected]);
     const none = await readDecisions([]);
     expect(none).toEqual([]);
+  });
+
+  it("readItem returns one item, or undefined when missing, unsafe or corrupt", async () => {
+    const a = item("a");
+    await writeItem(a);
+    writeFileSync(join(inboxDir(), "bad.item.json"), "{nope");
+    const found = await readItem("a");
+    const missing = await readItem("zzz");
+    const unsafe = await readItem("../a");
+    const corrupt = await readItem("bad");
+    expect(found).toEqual(a);
+    expect(missing).toBeUndefined();
+    expect(unsafe).toBeUndefined();
+    expect(corrupt).toBeUndefined();
+  });
+
+  it("readDecisions with ids skips missing, unsafe and mismatched files", async () => {
+    const a = decision("a");
+    await writeDecision(a);
+    writeFileSync(
+      join(inboxDir(), "b.decision.json"),
+      JSON.stringify(decision("other")),
+    );
+    const got = await readDecisions(["a", "b", "../a", "nope"]);
+    expect(got).toEqual([a]);
   });
 
   it("the first decision wins", async () => {

@@ -255,18 +255,29 @@ export async function readItems(): Promise<InboxItem[]> {
   return readJsonFiles(inboxDir(), ITEM_SUFFIX, isItem, (i) => i.id);
 }
 
+/** One item by id, or undefined when it is missing or unreadable. */
+export async function readItem(id: string): Promise<InboxItem | undefined> {
+  if (!safeId(id)) return undefined;
+  const parsed = await readJson(join(inboxDir(), `${id}${ITEM_SUFFIX}`));
+  return isItem(parsed) && parsed.id === id ? parsed : undefined;
+}
+
 export async function readDecisions(
   ids?: readonly string[],
 ): Promise<InboxDecision[]> {
-  const all = await readJsonFiles(
-    inboxDir(),
-    DECISION_SUFFIX,
-    isDecision,
-    (d) => d.id,
-  );
-  if (!ids) return all;
-  const wanted = new Set(ids);
-  return all.filter((d) => wanted.has(d.id));
+  if (ids) {
+    // Read only the files asked for: the dir is shared by every session.
+    const out: InboxDecision[] = [];
+    for (const id of ids) {
+      if (!safeId(id)) continue;
+      const parsed = await readJson(
+        join(inboxDir(), `${id}${DECISION_SUFFIX}`),
+      );
+      if (isDecision(parsed) && parsed.id === id) out.push(parsed);
+    }
+    return out;
+  }
+  return readJsonFiles(inboxDir(), DECISION_SUFFIX, isDecision, (d) => d.id);
 }
 
 export async function writeSessionStatus(
