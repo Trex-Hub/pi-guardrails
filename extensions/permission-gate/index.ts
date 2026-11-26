@@ -4,6 +4,7 @@ import {
   isToolCallEventType,
 } from "@earendil-works/pi-coding-agent";
 import { checkAction } from "../../src/core";
+import { lazyAdvisors } from "../../src/shared/away/advisor";
 import { configLoader } from "../../src/shared/config";
 import {
   createDelegateRoster,
@@ -22,7 +23,7 @@ import {
   GUARDRAILS_PROMPT_OPENED_EVENT,
   setupLegacyPromptEventAlias,
 } from "../../src/shared/events";
-import { handleAwayToolCall, lazyAdvisors } from "./away";
+import { handleAwayToolCall } from "./away";
 import { isCommandAllowed, saveCommandSessionGrant } from "./grants";
 import { COMMAND_OPTIONS, commandPark } from "./pi-live";
 import {

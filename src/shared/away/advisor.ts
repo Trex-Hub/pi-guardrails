@@ -142,3 +142,12 @@ export async function runAdvisors(
     options.signal?.removeEventListener("abort", stop);
   }
 }
+
+/** Roster factory for an extension: lazy, so off mode never emits the advisor request. */
+export function lazyAdvisors(pi: ExtensionAPI): () => AdvisorRoster {
+  let roster: AdvisorRoster | undefined;
+  return () => {
+    roster ??= createAdvisorRoster(pi);
+    return roster;
+  };
+}

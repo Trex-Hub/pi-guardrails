@@ -15,7 +15,6 @@ import type {
   GuardrailsCard,
 } from "../../src/core/delegation";
 import type { AdvisorRoster } from "../../src/shared/away/advisor";
-import { createAdvisorRoster } from "../../src/shared/away/advisor";
 import {
   type AwayCause,
   type AwayEnv,
@@ -66,15 +65,6 @@ export interface PermissionGateAwayDeps {
   delegates: DelegateRoster;
   /** Created on first use so off mode never touches the advisor event. */
   advisors: () => AdvisorRoster;
-}
-
-/** Roster factory for the extension: lazy, one per extension instance. */
-export function lazyAdvisors(pi: ExtensionAPI): () => AdvisorRoster {
-  let roster: AdvisorRoster | undefined;
-  return () => {
-    roster ??= createAdvisorRoster(pi);
-    return roster;
-  };
 }
 
 interface ToolCall {
