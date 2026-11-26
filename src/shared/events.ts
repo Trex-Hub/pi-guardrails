@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Action, Safety } from "../core/types";
+import type { InboxDecision, InboxItem } from "./away/inbox";
+import type { AdvisorRegisterPayload } from "./away/types";
 
 export const GUARDRAILS_ACTION_BLOCKED_EVENT = "guardrails:action:blocked";
 export const GUARDRAILS_RISK_DETECTED_EVENT = "guardrails:risk:detected";
@@ -15,6 +17,13 @@ export const GUARDRAILS_DELEGATE_REGISTER_EVENT =
   "guardrails:delegate:register";
 export const GUARDRAILS_DECISION_DELEGATED_EVENT =
   "guardrails:decision:delegated";
+
+export const GUARDRAILS_PRESENCE_CHANGED_EVENT = "guardrails:presence:changed";
+export const GUARDRAILS_AWAY_ITEM_EVENT = "guardrails:away:item";
+export const GUARDRAILS_AWAY_PAUSED_EVENT = "guardrails:away:paused";
+export const GUARDRAILS_TRIPWIRE_EVENT = "guardrails:tripwire";
+export const GUARDRAILS_ADVISOR_REGISTER_EVENT = "guardrails:advisor:register";
+export const GUARDRAILS_ADVISOR_REQUEST_EVENT = "guardrails:advisor:request";
 
 export type GuardrailsFeatureId = "policies" | "permissionGate" | "pathAccess";
 
@@ -43,7 +52,10 @@ export type GuardrailsBlockSource =
   | "user"
   | "user-stop"
   | "nonInteractive"
-  | "delegate";
+  | "delegate"
+  | "deferred"
+  | "repeat"
+  | "paused";
 
 export type GuardrailsActionBlockedPayload<TMeta = unknown> =
   GuardrailsEventBase & {
@@ -93,12 +105,63 @@ export type GuardrailsPromptOpenedPayload<TMeta = unknown> =
   GuardrailsEventBase &
     GuardrailsPromptEventDetails<TMeta, GuardrailsPromptWithId<TMeta>>;
 
+export type GuardrailsPromptClosedBy =
+  | "keyboard"
+  | "client"
+  | "timeout"
+  | "abort"
+  | "error";
+
 export type GuardrailsPromptClosedPayload = GuardrailsEventBase & {
   prompt: {
     /** The ID from the matching prompt-opened event. */
     id: string;
   };
+  /** How the prompt closed. Only set when away mode is on. */
+  by?: GuardrailsPromptClosedBy;
 };
+
+export type GuardrailsPresenceCause =
+  | "timeout"
+  | "command"
+  | "keypress"
+  | "input"
+  | "client";
+
+export interface GuardrailsPresenceChangedPayload {
+  source: "guardrails";
+  timestamp: string;
+  presence: "present" | "away";
+  cause: GuardrailsPresenceCause;
+}
+
+export interface GuardrailsAwayItemPayload {
+  source: "guardrails";
+  timestamp: string;
+  item: InboxItem;
+  /** Set when a decision for the item was applied. */
+  decision?: InboxDecision;
+}
+
+export interface GuardrailsAwayPausedPayload {
+  source: "guardrails";
+  timestamp: string;
+  paused: boolean;
+  reason?: string;
+}
+
+export interface GuardrailsTripwirePayload {
+  source: "guardrails";
+  timestamp: string;
+  item: InboxItem;
+}
+
+export interface GuardrailsAdvisorRequestPayload {
+  source: "guardrails";
+  timestamp: string;
+}
+
+export type { AdvisorRegisterPayload as GuardrailsAdvisorRegisterPayload };
 
 export type GuardrailsRiskDetectedPayload<TMeta = unknown> =
   GuardrailsEventBase & {
@@ -146,13 +209,66 @@ export function createPromptOpenedPayload<TMeta = unknown>(
 
 export function createPromptClosedPayload(
   opened: Pick<GuardrailsPromptOpenedPayload, "feature" | "prompt">,
+  by?: GuardrailsPromptClosedBy,
 ): GuardrailsPromptClosedPayload {
   return {
     source: "guardrails",
     feature: opened.feature,
     timestamp: timestamp(),
     prompt: { id: opened.prompt.id },
+    ...(by ? { by } : {}),
   };
+}
+
+export function emitPresenceChanged(
+  pi: ExtensionAPI,
+  presence: GuardrailsPresenceChangedPayload["presence"],
+  cause: GuardrailsPresenceCause,
+): void {
+  const payload: GuardrailsPresenceChangedPayload = {
+    source: "guardrails",
+    timestamp: timestamp(),
+    presence,
+    cause,
+  };
+  pi.events.emit(GUARDRAILS_PRESENCE_CHANGED_EVENT, payload);
+}
+
+export function emitAwayItem(
+  pi: ExtensionAPI,
+  item: InboxItem,
+  decision?: InboxDecision,
+): void {
+  const payload: GuardrailsAwayItemPayload = {
+    source: "guardrails",
+    timestamp: timestamp(),
+    item,
+    ...(decision ? { decision } : {}),
+  };
+  pi.events.emit(GUARDRAILS_AWAY_ITEM_EVENT, payload);
+}
+
+export function emitAwayPaused(
+  pi: ExtensionAPI,
+  paused: boolean,
+  reason?: string,
+): void {
+  const payload: GuardrailsAwayPausedPayload = {
+    source: "guardrails",
+    timestamp: timestamp(),
+    paused,
+    ...(reason !== undefined ? { reason } : {}),
+  };
+  pi.events.emit(GUARDRAILS_AWAY_PAUSED_EVENT, payload);
+}
+
+export function emitTripwire(pi: ExtensionAPI, item: InboxItem): void {
+  const payload: GuardrailsTripwirePayload = {
+    source: "guardrails",
+    timestamp: timestamp(),
+    item,
+  };
+  pi.events.emit(GUARDRAILS_TRIPWIRE_EVENT, payload);
 }
 
 export function emitActionBlocked<TMeta = unknown>(

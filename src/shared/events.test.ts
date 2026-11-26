@@ -124,3 +124,12 @@ describe("setupLegacyPromptEventAlias", () => {
     );
   });
 });
+
+describe("away mode event payloads", () => {
+  it("leaves the prompt-closed payload unchanged unless `by` is given", () => {
+    const opened = createPromptOpenedPayload(promptEvent);
+    const plain = createPromptClosedPayload(opened);
+    expect("by" in plain).toBe(false);
+    expect(createPromptClosedPayload(opened, "timeout").by).toBe("timeout");
+  });
+});

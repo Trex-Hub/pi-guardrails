@@ -290,3 +290,15 @@ describe("AwayLadder", () => {
     expect(ladder.recordBlock("block")).toBe("stuck");
   });
 });
+
+describe("AwayLadder.configure", () => {
+  it("changes the limits and keeps the counters", () => {
+    const ladder = new AwayLadder({ stuckBlocks: 5, maxBlocks: 50 });
+    ladder.recordBlock("block");
+    ladder.recordBlock("block");
+    ladder.configure({ stuckBlocks: 3, maxBlocks: 4 });
+    expect(ladder.blocksSinceAway).toBe(2);
+    expect(ladder.recordBlock("block")).toBe("stuck");
+    expect(ladder.recordBlock("block")).toBe("limit");
+  });
+});

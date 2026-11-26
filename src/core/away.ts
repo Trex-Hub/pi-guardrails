@@ -67,13 +67,19 @@ export type LadderSignal = "none" | "stuck" | "stuck-again" | "limit";
  * blocks with no progress between them) or has hit the overall block limit.
  */
 export class AwayLadder {
-  private readonly stuckBlocks: number;
-  private readonly maxBlocks: number;
+  private stuckBlocks: number;
+  private maxBlocks: number;
   private sinceAway = 0;
   private sinceProgress = 0;
   private nudged = false;
 
   constructor(opts: { stuckBlocks: number; maxBlocks: number }) {
+    this.stuckBlocks = opts.stuckBlocks;
+    this.maxBlocks = opts.maxBlocks;
+  }
+
+  /** Updates the limits without touching the counters (config can change mid-session). */
+  configure(opts: { stuckBlocks: number; maxBlocks: number }): void {
     this.stuckBlocks = opts.stuckBlocks;
     this.maxBlocks = opts.maxBlocks;
   }

@@ -5,6 +5,7 @@ import type {
   DelegateVerdict,
 } from "../../core/delegation";
 import type { Action } from "../../core/types";
+import type { BlockedAction } from "../away/types";
 import type { GuardrailsFeatureId } from "../events";
 
 export interface DelegationRequest {
@@ -14,6 +15,10 @@ export interface DelegationRequest {
   metadata?: unknown;
   toolName: string;
   input: Record<string, unknown>;
+  /** Set on follow-up checks after a block: the actions blocked so far this session. */
+  watch?: { blocked: BlockedAction[] };
+  /** The user's plain-language rules for what is fine while they are away. */
+  standingPermissions?: string[];
 }
 
 export interface DelegationContext {
@@ -27,6 +32,8 @@ export interface GuardrailsDelegate {
   id: string;
   name: string;
   isEnabled?(): boolean;
+  /** Opt in to follow-up checks of commands run after a block. */
+  watch?: boolean;
   decide(
     request: DelegationRequest,
     context: DelegationContext,
