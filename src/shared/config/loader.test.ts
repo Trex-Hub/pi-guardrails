@@ -478,7 +478,8 @@ describe("delegation resolution", () => {
   it.each([
     [-1, 10000],
     ["fast", 10000],
-    [120000, 60000],
+    [400000, 300000],
+    [120000, 120000],
     [2500, 2500],
   ])("bounds delegation.timeoutMs %j to %j", async (timeoutMs, expected) => {
     const config = await load(`/tmp/pi-agent-delegation-timeout-${expected}`, {

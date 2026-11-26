@@ -7,6 +7,7 @@ import {
   combineDelegateOutcomes,
   type DelegateOutcome,
   isDelegateAnswer,
+  sanitizeAnswerExtras,
 } from "../../core/delegation";
 import { GUARDRAILS_DECISION_DELEGATED_EVENT } from "../events";
 import { delegationBoard } from "./board";
@@ -104,7 +105,7 @@ export async function runDelegates(
       return {
         ...base,
         status: "answered",
-        answer: result,
+        answer: sanitizeAnswerExtras(result),
         elapsedMs: elapsed(),
       };
     } catch (error) {

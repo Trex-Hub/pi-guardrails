@@ -377,3 +377,35 @@ describe("delegate roster", () => {
     expect(roster.list()).toEqual([]);
   });
 });
+
+describe("runDelegates answer extras", () => {
+  it("stores the sanitized answer on the outcome", async () => {
+    const outcomes = await runDelegates(
+      [
+        delegate("a", () => ({
+          verdict: "ask",
+          reason: "unsure",
+          risk: "medium" as never,
+          severe: "yes" as never,
+          card: { summary: "" } as never,
+        })),
+        delegate("b", () => ({
+          verdict: "ask",
+          reason: "unsure",
+          risk: "low",
+          card: { summary: "Does a thing", category: "thing" },
+        })),
+      ],
+      request,
+      sessionCtx,
+      { timeoutMs: 1000 },
+    );
+    expect(outcomes[0]?.answer).toEqual({ verdict: "ask", reason: "unsure" });
+    expect(outcomes[1]?.answer).toEqual({
+      verdict: "ask",
+      reason: "unsure",
+      risk: "low",
+      card: { summary: "Does a thing", category: "thing" },
+    });
+  });
+});

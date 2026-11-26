@@ -7,7 +7,12 @@ import pkg from "../../../package.json" with { type: "json" };
 import type { AllowedPath } from "../../core/paths/path";
 import { DEFAULT_CONFIG } from "./defaults";
 import { migrations } from "./migration";
-import type { GuardrailsConfig, PolicyRule, ResolvedConfig } from "./types";
+import type {
+  AwayMode,
+  GuardrailsConfig,
+  PolicyRule,
+  ResolvedConfig,
+} from "./types";
 
 class GuardrailsConfigLoader extends ConfigLoader<
   GuardrailsConfig,
@@ -35,6 +40,83 @@ function mergePatternArrays<T extends { pattern: string }>(
     }
   }
   return [...merged.values()];
+}
+
+function boundedNumber(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+  integer: boolean,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  if (integer && !Number.isInteger(value)) return fallback;
+  return Math.min(Math.max(value, min), max);
+}
+
+function resolveAway(
+  merged: unknown,
+  global: GuardrailsConfig | null | undefined,
+  local: GuardrailsConfig | null | undefined,
+  memory: GuardrailsConfig | null | undefined,
+): ResolvedConfig["away"] {
+  const defaults = DEFAULT_CONFIG.away;
+  const raw = (merged && typeof merged === "object" ? merged : {}) as Record<
+    string,
+    unknown
+  >;
+
+  // mode: highest-priority scope that sets it wins; anything invalid is "off".
+  const modeSource = [memory, local, global].find(
+    (scope) => scope?.away?.mode !== undefined,
+  );
+  const mode = modeSource?.away?.mode;
+  const resolvedMode: AwayMode =
+    mode === "auto" || mode === "always" || mode === "off" ? mode : "off";
+
+  const standingPermissions: string[] = [];
+  for (const scope of [global, local, memory]) {
+    const list = scope?.away?.standingPermissions;
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      if (typeof entry !== "string") continue;
+      const text = entry.trim();
+      if (text && !standingPermissions.includes(text)) {
+        standingPermissions.push(text);
+      }
+    }
+  }
+
+  return {
+    mode: resolvedMode,
+    promptTimeoutMs: boundedNumber(
+      raw.promptTimeoutMs,
+      1000,
+      3_600_000,
+      defaults.promptTimeoutMs,
+      false,
+    ),
+    lowRisk:
+      raw.lowRisk === "allow" || raw.lowRisk === "defer"
+        ? raw.lowRisk
+        : defaults.lowRisk,
+    watchCommands: boundedNumber(
+      raw.watchCommands,
+      0,
+      100,
+      defaults.watchCommands,
+      true,
+    ),
+    stuckBlocks: boundedNumber(
+      raw.stuckBlocks,
+      1,
+      50,
+      defaults.stuckBlocks,
+      true,
+    ),
+    maxBlocks: boundedNumber(raw.maxBlocks, 1, 1000, defaults.maxBlocks, true),
+    standingPermissions,
+  };
 }
 
 export function createGuardrailsConfigLoader(): GuardrailsConfigLoader {
@@ -131,7 +213,7 @@ export function createGuardrailsConfigLoader(): GuardrailsConfigLoader {
         typeof timeoutMs === "number" &&
         Number.isFinite(timeoutMs) &&
         timeoutMs > 0
-          ? Math.min(timeoutMs, 60_000)
+          ? Math.min(timeoutMs, 300_000)
           : DEFAULT_CONFIG.delegation.timeoutMs;
 
       const inputGuardMs = resolved.prompts.inputGuardMs;
@@ -141,6 +223,8 @@ export function createGuardrailsConfigLoader(): GuardrailsConfigLoader {
         inputGuardMs >= 0
           ? Math.min(inputGuardMs, 10_000)
           : DEFAULT_CONFIG.prompts.inputGuardMs;
+
+      resolved.away = resolveAway(resolved.away, global, local, memory);
 
       return resolved;
     },

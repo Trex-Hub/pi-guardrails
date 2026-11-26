@@ -405,6 +405,55 @@ function matchBuiltinDangerous(
   return undefined;
 }
 
+const NEVER_LOW_RISK_MATCHERS: readonly StructuralMatcher[] = [
+  sudoMatcher,
+  doasMatcher,
+  pkexecMatcher,
+  ddMatcher,
+  mkfsMatcher,
+  wipefsMatcher,
+  blkdiscardMatcher,
+  fdiskMatcher,
+  partedMatcher,
+  containerMatcher,
+  shredMatcher,
+];
+
+/**
+ * True when any simple command in `command` (pipelines, lists, subshells and
+ * substitutions included) matches a matcher whose commands can never count as
+ * low risk: admin rights, disk and filesystem operations, risky container runs
+ * and secure overwrite. Unparseable input returns true. `rm`, `chmod` and
+ * `chown` are deliberately not on the list.
+ */
+export function hasNeverLowRiskCommand(command: string): boolean {
+  let ast: Program;
+  try {
+    const result = parse(command, { recoverErrors: true });
+    if ((result.errors?.length ?? 0) > 0) return true;
+    ast = result.ast;
+  } catch {
+    return true;
+  }
+
+  let found = false;
+  walkCommands(
+    ast,
+    (cmd) => {
+      if (!cmd) return false;
+      const words = (cmd.words ?? []).map(wordToString);
+      if (words.length === 0) return false;
+      if (NEVER_LOW_RISK_MATCHERS.some((matcher) => matcher(words))) {
+        found = true;
+        return true;
+      }
+      return false;
+    },
+    { includeSubstitutions: true },
+  );
+  return found;
+}
+
 export function checkDangerousCommand({
   command,
   patterns,

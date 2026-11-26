@@ -11,5 +11,6 @@ export {
   checkDangerousCommand,
   compileCommandPattern,
   compileCommandPatterns,
+  hasNeverLowRiskCommand,
   matchDangerousCommand,
 } from "./dangerous";
