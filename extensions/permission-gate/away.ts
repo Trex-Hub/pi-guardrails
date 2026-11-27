@@ -6,6 +6,7 @@ import type {
 import { checkAction, hasNeverLowRiskCommand } from "../../src/core";
 import {
   actionKey,
+  hasHighRiskAllow,
   isSevereBlock,
   pickCard,
   resolveRisk,
@@ -22,6 +23,7 @@ import {
   finishBlock,
   raiseTripwire,
   recordDenial,
+  recordHighRiskAllow,
   resolveAwayDecision,
 } from "../../src/shared/away/engine";
 import {
@@ -349,6 +351,18 @@ export async function handleAwayToolCall(
   );
   if (delegated?.verdict === "allow") {
     state.memory.delete(key);
+    if (
+      presence() === "away" &&
+      (hasHighRiskAllow(delegated.outcomes) || hasNeverLowRiskCommand(command))
+    ) {
+      await recordHighRiskAllow(env, {
+        action: safety.action,
+        flaggedReason: safety.reason,
+        outcomes: delegated.outcomes,
+        reason: delegated.reason,
+        cause: ctx.hasUI ? "away" : "headless",
+      });
+    }
     return;
   }
   if (delegated?.verdict === "block") {

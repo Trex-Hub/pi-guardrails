@@ -9,6 +9,7 @@ import type {
 import { checkAction, type Safety } from "../../src/core";
 import {
   actionKey,
+  hasHighRiskAllow,
   isSevereBlock,
   pickCard,
   resolveRisk,
@@ -31,6 +32,7 @@ import {
   finishBlock,
   raiseTripwire,
   recordDenial,
+  recordHighRiskAllow,
   resolveAwayDecisions,
 } from "../../src/shared/away/engine";
 import {
@@ -552,12 +554,32 @@ export async function handleAwayToolCall(
     ctx.cwd,
   );
   const pending: AwayDecisionParams[] = [];
+  const highRiskAllows: Omit<AwayDecisionParams, "risk">[] = [];
+  const proceedAfterAllows = async () => {
+    for (const params of highRiskAllows) await recordHighRiskAllow(env, params);
+    return proceed();
+  };
   let timedOut = false;
   for (const { absolutePath, delegated } of delegations) {
     const safety = await checkTarget(absolutePath);
     if (safety.kind === "safe") continue;
     if (delegated?.verdict === "allow") {
       state.memory.delete(actionKey(safety.action));
+      if (presence() === "away") {
+        const policy = await checkAction(
+          { kind: "file", path: absolutePath, origin: call.toolName },
+          policyRules,
+        );
+        if (hasHighRiskAllow(delegated.outcomes) || policy.kind !== "safe") {
+          highRiskAllows.push({
+            action: safety.action,
+            flaggedReason: safety.reason,
+            outcomes: delegated.outcomes,
+            reason: delegated.reason,
+            cause: ctx.hasUI ? "away" : "headless",
+          });
+        }
+      }
       continue;
     }
 
@@ -598,10 +620,10 @@ export async function handleAwayToolCall(
       cause: timedOut ? "timeout" : ctx.hasUI ? "away" : "headless",
     });
   }
-  if (pending.length === 0) return proceed();
+  if (pending.length === 0) return proceedAfterAllows();
 
   const decision = await resolveAwayDecisions(env, pending);
-  if (decision.kind === "allow") return proceed();
+  if (decision.kind === "allow") return proceedAfterAllows();
 
   const deferredPaths = decision.items.map((item) =>
     item.action.kind === "file" ? item.action.path : "",

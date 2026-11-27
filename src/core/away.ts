@@ -26,6 +26,18 @@ export function resolveRisk(
   return sawLow ? "low" : "high";
 }
 
+/** True when an answered outcome allowed the action and rated it high risk. */
+export function hasHighRiskAllow(
+  outcomes: readonly DelegateOutcome[],
+): boolean {
+  return outcomes.some(
+    (o) =>
+      o.status === "answered" &&
+      o.answer?.verdict === "allow" &&
+      o.answer.risk === "high",
+  );
+}
+
 /** First answered outcome's card, in roster order. */
 export function pickCard(
   outcomes: readonly DelegateOutcome[],

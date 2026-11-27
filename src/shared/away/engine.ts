@@ -260,6 +260,22 @@ export async function resolveAwayDecisions(
   return { kind: "defer", items };
 }
 
+/**
+ * Delegates allowed an action while the user is away, but it is high risk (a
+ * delegate said so, or code says it never counts as low risk): write an
+ * `allowed` item so the user can review it later. The action runs either way.
+ */
+export async function recordHighRiskAllow(
+  env: AwayEnv,
+  params: Omit<AwayDecisionParams, "risk">,
+): Promise<void> {
+  await publish(
+    env,
+    makeDecisionItem(env, { ...params, risk: "high" }, "allowed"),
+  );
+  env.state.memory.delete(actionKey(params.action));
+}
+
 /** The away rules for one action. See `resolveAwayDecisions`. */
 export async function resolveAwayDecision(
   env: AwayEnv,

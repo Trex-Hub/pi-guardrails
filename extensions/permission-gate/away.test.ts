@@ -626,6 +626,107 @@ describe("always mode", () => {
   });
 });
 
+describe("high-risk allows while away", () => {
+  const allowHigh: Answer = {
+    verdict: "allow",
+    reason: "user asked to install jq",
+    risk: "high",
+    card: { summary: "Installs jq" },
+  };
+
+  it("records an allowed item and runs the command when a delegate allows with risk high", async () => {
+    h.away = { mode: "always" };
+    const { run, custom, events } = await setup({
+      delegates: [{ decide: () => allowHigh }],
+    });
+    await expect(run("dangerous-cmd")).resolves.toBeUndefined();
+    expect(custom).not.toHaveBeenCalled();
+    const items = await readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      kind: "allowed",
+      cause: "away",
+      risk: "high",
+      reason: "d0: user asked to install jq",
+      card: { summary: "Installs jq" },
+      action: { kind: "command", command: "dangerous-cmd" },
+    });
+    expect(events.item).toHaveLength(1);
+    expect(events.blocked).toEqual([]);
+    expect(getAwayState("s1").blocked).toEqual([]);
+  });
+
+  it("records an allowed item for a never-low-risk command even without a risk", async () => {
+    h.away = { mode: "always" };
+    const { run } = await setup({ delegates: [{ decide: () => allow }] });
+    await expect(run("sudo dangerous-cmd")).resolves.toBeUndefined();
+    const items = await readItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "allowed", risk: "high" });
+  });
+
+  it("writes nothing for a low or absent risk allow", async () => {
+    h.away = { mode: "always" };
+    const low = await setup({
+      delegates: [{ decide: () => ({ ...allow, risk: "low" }) }],
+    });
+    await low.run("dangerous-cmd");
+    await expectNoItems();
+    const none = await setup({ delegates: [{ decide: () => allow }] });
+    await none.run("dangerous-cmd");
+    await expectNoItems();
+  });
+
+  it("uses cause headless without a UI in auto mode", async () => {
+    h.away = { mode: "auto" };
+    const { run } = await setup({
+      hasUI: false,
+      delegates: [{ decide: () => allowHigh }],
+    });
+    await expect(run("dangerous-cmd")).resolves.toBeUndefined();
+    const item = await firstItem();
+    expect(item).toMatchObject({ kind: "allowed", cause: "headless" });
+  });
+
+  it("records it in auto mode once the user is away", async () => {
+    h.away = { mode: "auto" };
+    const { run, pi } = await setup({
+      delegates: [{ decide: () => allowHigh }],
+    });
+    setPresence(pi, getAwayState("s1"), "away", "command");
+    await run("dangerous-cmd");
+    const item = await firstItem();
+    expect(item).toMatchObject({ kind: "allowed", cause: "away" });
+  });
+
+  it("writes nothing while the user is present", async () => {
+    h.away = { mode: "auto" };
+    const { run } = await setup({ delegates: [{ decide: () => allowHigh }] });
+    await expect(run("dangerous-cmd")).resolves.toBeUndefined();
+    await expectNoItems();
+  });
+
+  it("writes nothing when away mode is off", async () => {
+    h.away = { mode: "off" };
+    const { run, events } = await setup({
+      delegates: [{ decide: () => allowHigh }],
+    });
+    await expect(run("sudo dangerous-cmd")).resolves.toBeUndefined();
+    await expectNoItems();
+    expect(events.item).toEqual([]);
+  });
+
+  it("does not record watch-only checks that allow", async () => {
+    h.away = { mode: "always" };
+    const { run } = await setup({
+      delegates: [{ watch: true, decide: () => allowHigh }],
+    });
+    getAwayState("s1").watchRemaining = 3;
+    await expect(run("sudo echo hi")).resolves.toBeUndefined();
+    await expectNoItems();
+  });
+});
+
 describe("auto mode", () => {
   beforeEach(() => {
     h.away = { mode: "auto" };

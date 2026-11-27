@@ -489,6 +489,105 @@ describe("path access, always mode", () => {
   });
 });
 
+describe("path access, high-risk allows while away", () => {
+  const allowHigh: Answer = {
+    verdict: "allow",
+    reason: "needed for the task",
+    risk: "high",
+    card: { summary: "Reads a config" },
+  };
+  const secretsPolicy = [
+    {
+      id: "secrets",
+      protection: "noAccess",
+      patterns: [{ pattern: "/outside/secret.txt" }],
+      onlyIfExists: false,
+    },
+  ];
+
+  beforeEach(() => {
+    h.away = { mode: "always" };
+  });
+
+  it("records an allowed item and runs when a delegate allows with risk high", async () => {
+    const { read, events } = await setup({ decide: () => allowHigh });
+    await expect(read()).resolves.toBeUndefined();
+    const written = await items();
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({
+      kind: "allowed",
+      cause: "away",
+      risk: "high",
+      reason: "d: needed for the task",
+      card: { summary: "Reads a config" },
+      action: { kind: "file", path: "/outside/secret.txt" },
+    });
+    expect(events.item).toHaveLength(1);
+    expect(events.blocked).toEqual([]);
+  });
+
+  it("records an allowed item when the path matches a policy rule, even without a risk", async () => {
+    h.policies = secretsPolicy;
+    const { read } = await setup({ decide: () => allow });
+    await expect(read()).resolves.toBeUndefined();
+    const written = await items();
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({ kind: "allowed", risk: "high" });
+  });
+
+  it("writes nothing for a plain allow, a low risk allow, or the bash write floor", async () => {
+    const plain = await setup({ decide: () => allow });
+    await plain.read();
+    const bash = await setup({ decide: () => allow });
+    await bash.call("bash", { command: "cat /outside/a.txt" });
+    const low = await setup({ decide: () => ({ ...allow, risk: "low" }) });
+    await low.write();
+    const written = await items();
+    expect(written).toEqual([]);
+  });
+
+  it("uses cause headless without a UI in auto mode", async () => {
+    h.away = { mode: "auto" };
+    const { read } = await setup({ hasUI: false, decide: () => allowHigh });
+    await expect(read()).resolves.toBeUndefined();
+    const written = await items();
+    expect(written[0]).toMatchObject({ kind: "allowed", cause: "headless" });
+  });
+
+  it("writes nothing while present in auto mode or when off", async () => {
+    h.away = { mode: "auto" };
+    const present = await setup({ decide: () => allowHigh });
+    await expect(present.read()).resolves.toBeUndefined();
+    h.away = { mode: "off" };
+    const off = await setup({ decide: () => allowHigh });
+    await expect(off.read()).resolves.toBeUndefined();
+    const written = await items();
+    expect(written).toEqual([]);
+  });
+
+  it("writes no allowed item when another path in the call is deferred", async () => {
+    const { call } = await setup({
+      decide: (request: Loose) =>
+        request.action.path === "/outside/a.txt" ? allowHigh : ask(),
+    });
+    const result = await call("bash", {
+      command: "cat /outside/a.txt /outside/b.txt",
+    });
+    expect(result.reason).toBe(`${DEFERRED}\n/outside/b.txt`);
+    const written = await items();
+    expect(written.map((item) => item.kind)).toEqual(["waiting"]);
+  });
+
+  it("records one allowed item per high-risk path when the call runs", async () => {
+    const { call } = await setup({ decide: () => allowHigh });
+    await expect(
+      call("bash", { command: "cat /outside/a.txt /outside/b.txt" }),
+    ).resolves.toBeUndefined();
+    const written = await items();
+    expect(written.map((item) => item.kind)).toEqual(["allowed", "allowed"]);
+  });
+});
+
 describe("path access, auto mode", () => {
   beforeEach(() => {
     h.away = { mode: "auto" };

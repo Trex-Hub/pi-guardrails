@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AwayLadder,
   actionKey,
+  hasHighRiskAllow,
   isSevereBlock,
   normalizeCommand,
   pickCard,
@@ -147,6 +148,34 @@ describe("resolveRisk", () => {
 
   it("is high when the floor is set", () => {
     expect(resolveRisk([outcome("a", { risk: "low" })], true)).toBe("high");
+  });
+});
+
+describe("hasHighRiskAllow", () => {
+  it("is true only for an answered allow with risk high", () => {
+    expect(
+      hasHighRiskAllow([outcome("a", { verdict: "allow", risk: "high" })]),
+    ).toBe(true);
+    expect(
+      hasHighRiskAllow([
+        outcome("a", { verdict: "allow", risk: "low" }),
+        outcome("b", { verdict: "allow", risk: "high" }),
+      ]),
+    ).toBe(true);
+  });
+
+  it("ignores asks, blocks, low or absent risk and unanswered outcomes", () => {
+    expect(
+      hasHighRiskAllow([outcome("a", { verdict: "ask", risk: "high" })]),
+    ).toBe(false);
+    expect(
+      hasHighRiskAllow([outcome("a", { verdict: "block", risk: "high" })]),
+    ).toBe(false);
+    expect(hasHighRiskAllow([outcome("a", { verdict: "allow" })])).toBe(false);
+    const failed = outcome("e", undefined, "error");
+    failed.answer = { verdict: "allow", reason: "x", risk: "high" };
+    expect(hasHighRiskAllow([failed])).toBe(false);
+    expect(hasHighRiskAllow([])).toBe(false);
   });
 });
 
