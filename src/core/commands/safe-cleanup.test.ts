@@ -147,3 +147,18 @@ describe("isSafeCleanup: symlinks", () => {
     );
   });
 });
+
+describe("isSafeCleanup: wrapped rm is not a plain rm", () => {
+  it.each([
+    "nohup rm -rf node_modules",
+    "env X=1 rm -rf build",
+    "nice -n 10 rm -rf build",
+    "timeout 5 rm -rf build",
+    "/bin/rm -rf build",
+    "sh -c 'rm -rf build'",
+    "xargs rm -rf",
+    "find . -name build -exec rm -rf {} \\;",
+  ])("%s", (command) => {
+    expect(safe(command)).toBe(false);
+  });
+});

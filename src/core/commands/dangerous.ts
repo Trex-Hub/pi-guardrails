@@ -1,5 +1,6 @@
 import { type Program, parse } from "@aliou/sh";
 import { walkCommands, wordToString } from "../shell/ast";
+import { basename, resolveWrapped } from "./wrappers";
 
 /**
  * Dangerous command matchers for the permission gate.
@@ -440,11 +441,6 @@ const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
 /** Nested `sh -c` / `eval` strings are parsed up to this depth. */
 const MAX_NEVER_LOW_RISK_DEPTH = 3;
 
-function basename(word: string): string {
-  const i = word.lastIndexOf("/");
-  return i === -1 ? word : word.slice(i + 1);
-}
-
 function isNeverLowRiskCommandName(name: string): boolean {
   return NEVER_LOW_RISK_COMMANDS.has(name) || name.startsWith("mkfs");
 }
@@ -520,6 +516,96 @@ export function hasNeverLowRiskCommand(command: string): boolean {
   return neverLowRisk(command, 0);
 }
 
+/** Nested scripts (`sh -c`, `eval`) are parsed up to this depth. */
+const MAX_SCRIPT_DEPTH = 3;
+
+function substringMatch(
+  command: string,
+  fallbackPatterns: readonly CommandPattern[],
+): DangerousCommandMatch | undefined {
+  for (const pattern of fallbackPatterns) {
+    if (command.includes(pattern.pattern)) {
+      return {
+        description: pattern.description ?? pattern.pattern,
+        pattern: pattern.pattern,
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Matches the built-in matchers against the command a simple command really
+ * runs: its head by basename (`/usr/bin/sudo`), and whatever a wrapper hands
+ * over to (`env X=1 sudo`, `xargs rm -rf`, `sh -c '...'`), see `wrappers.ts`.
+ */
+function matchWrapped(
+  words: string[],
+  depth: number,
+  fallbackPatterns: readonly CommandPattern[],
+): DangerousCommandMatch | undefined {
+  if (words.length === 0) return undefined;
+  const direct = matchBuiltinDangerous([
+    basename(words[0] ?? ""),
+    ...words.slice(1),
+  ]);
+  if (direct) return direct;
+  for (const inner of resolveWrapped(words)) {
+    const match =
+      "words" in inner
+        ? matchWrapped(inner.words, depth, fallbackPatterns)
+        : matchScript(inner.script, depth + 1, fallbackPatterns);
+    if (match) return match;
+  }
+  return undefined;
+}
+
+/**
+ * A script handed to a shell. Past the depth limit, or when it does not parse
+ * cleanly, the substring fallbacks run on it: never safe just because it could
+ * not be parsed.
+ */
+function matchScript(
+  script: string,
+  depth: number,
+  fallbackPatterns: readonly CommandPattern[],
+): DangerousCommandMatch | undefined {
+  if (depth > MAX_SCRIPT_DEPTH) return substringMatch(script, fallbackPatterns);
+  let ast: Program | undefined;
+  let clean = false;
+  try {
+    const result = parse(script, { recoverErrors: true });
+    ast = result.ast;
+    clean = (result.errors?.length ?? 0) === 0;
+  } catch {
+    ast = undefined;
+  }
+  const match = ast ? matchProgram(ast, depth, fallbackPatterns) : undefined;
+  if (match) return match;
+  return clean ? undefined : substringMatch(script, fallbackPatterns);
+}
+
+function matchProgram(
+  ast: Program,
+  depth: number,
+  fallbackPatterns: readonly CommandPattern[],
+): DangerousCommandMatch | undefined {
+  let match: DangerousCommandMatch | undefined;
+  walkCommands(
+    ast,
+    (cmd) => {
+      // Skip compound-node redirect callbacks (cmd === undefined): command
+      // matchers match on words, not redirect targets.
+      if (!cmd) return false;
+      const words = (cmd.words ?? []).map(wordToString);
+      match = matchWrapped(words, depth, fallbackPatterns);
+      return match !== undefined;
+    },
+    { includeSubstitutions: true },
+  );
+  return match;
+}
+
 export function checkDangerousCommand({
   command,
   patterns,
@@ -543,34 +629,12 @@ export function checkDangerousCommand({
 
   if (useBuiltinMatchers) {
     if (ast && ast.body.length > 0) {
-      let match: DangerousCommandMatch | undefined;
-      walkCommands(
-        ast,
-        (cmd) => {
-          // Skip compound-node redirect callbacks (cmd === undefined): command
-          // matchers match on words, not redirect targets.
-          if (!cmd) return false;
-          const words = (cmd.words ?? []).map(wordToString);
-          const result = matchBuiltinDangerous(words);
-          if (result) {
-            match = result;
-            return true;
-          }
-          return false;
-        },
-        { includeSubstitutions: true },
-      );
+      const match = matchProgram(ast, 0, fallbackPatterns);
       if (match) return match;
     }
     if (!parsedCleanly) {
-      for (const pattern of fallbackPatterns) {
-        if (command.includes(pattern.pattern)) {
-          return {
-            description: pattern.description ?? pattern.pattern,
-            pattern: pattern.pattern,
-          };
-        }
-      }
+      const match = substringMatch(command, fallbackPatterns);
+      if (match) return match;
     }
   }
 

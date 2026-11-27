@@ -171,6 +171,31 @@ describe("allowSafeCleanup in the permission gate", () => {
     expect(result).toMatchObject({ block: true });
   });
 
+  it.each([
+    "nohup rm -rf node_modules",
+    "env X=1 rm -rf build",
+    "/bin/rm -rf build",
+    "sh -c 'rm -rf build'",
+    "xargs rm -rf",
+    "find . -name build -exec rm -rf {} \\;",
+  ])(
+    "flag true: wrapped %s stays flagged, only a plain rm is exempt",
+    async (command) => {
+      h.allowSafeCleanup = true;
+      const { run, custom } = await setup();
+      const result = await run(command);
+      expect(custom).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ block: true });
+    },
+  );
+
+  it("wrapped commands are flagged with the built-in matchers alone (off mode)", async () => {
+    h.patterns = [];
+    const { run, custom } = await setup();
+    await run("env FOO=1 sudo ls");
+    expect(custom).toHaveBeenCalledOnce();
+  });
+
   it("flag true: other dangerous commands are unaffected", async () => {
     h.allowSafeCleanup = true;
     h.patterns = [
