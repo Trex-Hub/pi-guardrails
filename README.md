@@ -49,7 +49,7 @@ Checks tool calls that target paths outside the current working directory. It ca
 
 Detects dangerous bash commands before they run — recursive deletes, privileged commands, disk formatting, broad permission changes, and any custom patterns you configure. You can allow once, allow for the session, deny, or decline and stop, which also aborts the current turn. Auto-deny patterns can set `terminate: true` to end the agent's turn after blocking, so it does not retry the blocked command.
 
-Command, policy, and path checks also look inside command and process substitutions, so a risky call wrapped in `$(...)` is still caught.
+Command, policy, and path checks also look inside command and process substitutions, so a risky call wrapped in `$(...)` is still caught. Built-in command detection also sees through wrappers such as `env`, `nohup`, `timeout`, `xargs`, `find -exec`, `sh -c` and `eval`, and absolute paths like `/usr/bin/sudo`.
 
 [![Guardrails permission gate walkthrough](https://assets.aliou.me/github/aliou/pi-guardrails/v0.22.0/permission-gate.gif)](https://assets.aliou.me/github/aliou/pi-guardrails/v0.22.0/permission-gate.mp4)
 
