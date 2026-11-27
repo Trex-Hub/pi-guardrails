@@ -29,8 +29,8 @@ Non-goals:
 
 ```text
 Flagged command (dangerous pattern, or outside path)
-  → fast reviewer decides?       yes → done
-  → stronger reviewer decides?   yes → done
+  → fast reviewer decides?       yes → done (*)
+  → stronger reviewer decides?   yes → done (*)
   → Both unsure:
       User present → prompt with a plain-language card (2 min limit)
                        answered → the user's choice
@@ -38,6 +38,9 @@ Flagged command (dangerous pattern, or outside path)
       User away    → away rules:
                        low risk    → run it, flag it for the morning review
                        higher risk → defer it: don't run it, put it on the list
+
+(*) An allow that is high risk, while the user is away, also goes on the
+    "allowed" list for review. See "Away rules".
 ```
 
 Around that flow:
@@ -100,6 +103,7 @@ paths a bash command touches.
 | D24 | Each session tracks presence on its own. | Simple. The cost is one 2-minute wait per session, which the user accepted. |
 | D25 | Urgent (tripwire) items offer only "approve once" and "reject", never "always allow". | One keypress must not turn a severe item into a permanent rule. |
 | D26 | A non-severe denial writes no inbox item. | The agent is told, and the `[guardrails]` session entry records it. A denial is not waiting for anyone. |
+| D27 | While away, a delegate `allow` that is high risk runs, and is also written to the inbox as "allowed while you were away". | The delegates are trusted to allow. A human can still review the risky ones and mark them fine or wrong. Low-risk and unrated allows stay out of the inbox, or it would flood. |
 
 ## Presence
 
@@ -147,6 +151,23 @@ Applied to an `ask` result (both reviewers unsure) while away:
    were away".
 2. Otherwise: defer it. Block it with the deferred message and record it as
    "waiting for you".
+
+A delegate `allow` is different: the action runs, and no model is asked
+again. While away, an allow is also recorded as "allowed while you were away"
+(risk "high", the delegates' reason, the card) when it is high risk, so you
+can review it:
+
+- Commands: an allowing delegate reported `risk: "high"`, or the command
+  matches a built-in admin-rights matcher (`sudo`, `doas`, `pkexec`, disk
+  tools, and so on; the same matchers that force "not low risk").
+- Paths: an allowing delegate reported `risk: "high"`, or the path matches an
+  enabled policy rule. Writes outside the temp folder don't count here, or the
+  inbox would fill up.
+
+Allows rated low or without a risk leave no item. Nothing is recorded while
+the user is present, in `off` mode, or for the follow-up checks of the watch
+window. If a call touches several paths and another path is deferred, the
+call is blocked, so none of its allows are recorded.
 
 ### Low risk
 

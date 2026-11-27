@@ -75,7 +75,7 @@ Modes:
 - `auto`: a prompt waits `away.promptTimeoutMs` (2 minutes), then you count as away. Typing or pressing a key brings you back. Print and JSON runs count as away.
 - `always`: never prompts; the away rules always apply. For a server.
 
-While you are away, a flagged action that your delegates can't settle is either run and logged (when a delegate rates it low risk and `away.lowRisk` is `"allow"`) or queued for you and not run. The agent is told it was queued, so it moves on instead of working around it. Clearly harmful actions are blocked and end the turn. Repeats, stuck runs and too many blocks are handled too, and a paused run resumes when you return. Without a delegate that reports risk, everything unsettled is queued. See [decision delegation](docs/decision-delegation.md) for how delegates and advisors plug in.
+While you are away, a flagged action that your delegates can't settle is either run and logged (when a delegate rates it low risk and `away.lowRisk` is `"allow"`) or queued for you and not run. The agent is told it was queued, so it moves on instead of working around it. Clearly harmful actions are blocked and end the turn. Repeats, stuck runs and too many blocks are handled too, and a paused run resumes when you return. A high-risk action that a delegate allows while you are away also runs, and is listed under "allowed while you were away" for review. Without a delegate that reports risk, everything unsettled is queued. See [decision delegation](docs/decision-delegation.md) for how delegates and advisors plug in.
 
 Commands:
 
