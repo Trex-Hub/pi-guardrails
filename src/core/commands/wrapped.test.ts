@@ -143,6 +143,43 @@ const notFlagged = [
   "taskset -c 0 ./bench",
 ];
 
+/** Escapes for a script placed inside double quotes (`\\`, `"`, `$`, backtick). */
+const wrapInDoubleQuotes = (script: string) =>
+  `sh -c "${script.replace(/([\\"$`])/g, "\\$1")}"`;
+
+describe("built-in detection through double-quoted nested scripts", () => {
+  it.each([
+    ["sudo -n true", "superuser command"],
+    ["rm -rf build", "recursive force delete"],
+  ])('flags %s at 2, 3 and 4 levels of sh -c "..."', (inner, description) => {
+    let command = inner;
+    for (let level = 1; level <= 4; level++) {
+      command = wrapInDoubleQuotes(command);
+      const match = check(command);
+      expect(match?.description).toBe(description);
+      if (level <= 3) expect(match?.pattern).toBe("(structural)");
+    }
+  });
+
+  it("flags the tester's mixed-quote form structurally", () => {
+    const match = check('sh -c "sh -c \\"sh -c \'sudo -n true\'\\""');
+    expect(match).toEqual({
+      description: "superuser command",
+      pattern: "(structural)",
+    });
+  });
+
+  it.each([
+    'sh -c "echo \\"hi\\""',
+    'git commit -m "say \\"sudo\\""',
+    'echo "\\$sudo \\\\ rm -rf"',
+    'sh -c "echo \\"sudo\\""',
+    'bash -c "echo \\"a\\" && ls"',
+  ])("does not flag %s", (command) => {
+    expect(check(command)).toBeUndefined();
+  });
+});
+
 describe("built-in detection through wrappers", () => {
   it.each(flagged)("flags %j", (command, description) => {
     const match = check(command);

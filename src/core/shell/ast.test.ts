@@ -232,3 +232,24 @@ describe("isFdDuplicationRedirect", () => {
     expect(result).toBe(expected);
   });
 });
+
+describe("wordToString double-quote escapes", () => {
+  const first = (command: string) => {
+    const { ast } = parse(command);
+    const stmt = ast.body[0];
+    if (stmt?.command.type !== "SimpleCommand") throw new Error("no command");
+    return (stmt.command.words ?? []).map(wordToString);
+  };
+
+  it('decodes only \\", \\\\, \\$, \\` and backslash-newline inside double quotes', () => {
+    expect(first('echo "a\\"b \\$c \\\\ \\`d \\e"')).toEqual([
+      "echo",
+      'a"b $c \\ `d \\e',
+    ]);
+    expect(first('echo "a\\\nb"')).toEqual(["echo", "ab"]);
+  });
+
+  it("leaves single-quoted backslashes alone (the parser already decodes unquoted ones)", () => {
+    expect(first("echo a\\ b 'c\\\"d'")).toEqual(["echo", "a b", 'c\\"d']);
+  });
+});

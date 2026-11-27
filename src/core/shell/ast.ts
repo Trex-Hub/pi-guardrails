@@ -27,18 +27,28 @@ import type {
  * includes the raw text representation (e.g. `$VAR`).
  */
 export function wordToString(word: Word): string {
-  return word.parts.map(partToString).join("");
+  return word.parts.map((part) => partToString(part)).join("");
 }
 
-function partToString(part: WordPart): string {
+/**
+ * Inside double quotes bash only unescapes `\"`, `\\`, `\$`, `` \` `` and a
+ * backslash-newline; any other backslash stays. The parser keeps them all raw.
+ */
+function unescapeDoubleQuoted(value: string): string {
+  return value.replace(/\\(["\\$`]|\n)/g, (_, c: string) =>
+    c === "\n" ? "" : c,
+  );
+}
+
+function partToString(part: WordPart, inDoubleQuotes = false): string {
   switch (part.type) {
     case "Literal":
-      return part.value;
+      return inDoubleQuotes ? unescapeDoubleQuoted(part.value) : part.value;
     case "SglQuoted":
       return part.value;
     case "DblQuoted":
     case "LocaleStr":
-      return part.parts.map(partToString).join("");
+      return part.parts.map((inner) => partToString(inner, true)).join("");
     case "AnsiC":
       return part.value;
     case "ParamExp": {
