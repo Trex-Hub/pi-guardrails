@@ -66,7 +66,7 @@ export async function loadInbox(
       item,
       section: item.kind,
       project: basename(item.session.cwd),
-      sessionLabel: item.session.name ?? item.session.id.slice(0, 8),
+      sessionLabel: item.session.name ?? item.session.id.slice(-8),
       sessionState: status?.state ?? "closed",
       sessionFile: item.session.file ?? status?.file,
       label: actionLabel(item.action, item.toolName).replace(/\s+/g, " "),

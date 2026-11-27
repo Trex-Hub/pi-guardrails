@@ -96,7 +96,7 @@ describe("loadInbox", () => {
     const b = rows.find((r) => r.item.id === "b") as InboxRow;
     expect(a).toMatchObject({
       project: "proj",
-      sessionLabel: "abcdef12",
+      sessionLabel: "ef123456",
       sessionState: "paused",
     });
     expect(b).toMatchObject({
@@ -104,6 +104,23 @@ describe("loadInbox", () => {
       sessionLabel: "refactor",
       sessionState: "closed",
     });
+  });
+
+  it("labels unnamed sessions with the last 8 characters of the id", async () => {
+    // UUIDv7 ids of sessions started together share their first characters.
+    await writeItem(
+      item("a", {
+        session: { id: "0192f3a1-aaaa-7000-8000-00000000cafe", cwd: "/x/p" },
+      }),
+    );
+    await writeItem(
+      item("b", {
+        session: { id: "0192f3a1-aaaa-7000-8000-00000000beef", cwd: "/x/p" },
+      }),
+    );
+    const { rows } = await loadInbox(NOW);
+    const labels = rows.map((r) => r.sessionLabel).sort();
+    expect(labels).toEqual(["0000beef", "0000cafe"]);
   });
 
   it("a status whose process is gone counts as closed", async () => {
