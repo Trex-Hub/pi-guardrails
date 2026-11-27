@@ -377,3 +377,80 @@ describe("delegate roster", () => {
     expect(roster.list()).toEqual([]);
   });
 });
+
+describe("runDelegates answer extras", () => {
+  it("stores the sanitized answer on the outcome", async () => {
+    const outcomes = await runDelegates(
+      [
+        delegate("a", () => ({
+          verdict: "ask",
+          reason: "unsure",
+          risk: "medium" as never,
+          severe: "yes" as never,
+          card: { summary: "" } as never,
+        })),
+        delegate("b", () => ({
+          verdict: "ask",
+          reason: "unsure",
+          risk: "low",
+          card: { summary: "Does a thing", category: "thing" },
+        })),
+      ],
+      request,
+      sessionCtx,
+      { timeoutMs: 1000 },
+    );
+    expect(outcomes[0]?.answer).toEqual({ verdict: "ask", reason: "unsure" });
+    expect(outcomes[1]?.answer).toEqual({
+      verdict: "ask",
+      reason: "unsure",
+      risk: "low",
+      card: { summary: "Does a thing", category: "thing" },
+    });
+  });
+});
+
+describe("delegateDecision watchOnly", () => {
+  const ctx = { ...sessionCtx } as never;
+
+  it("asks only delegates with watch: true and still records the decision", async () => {
+    const { pi, appendEntry } = fakePi();
+    const normal = vi.fn(() => ({ verdict: "allow" as const, reason: "n" }));
+    const watcher = vi.fn(() => ({ verdict: "block" as const, reason: "w" }));
+    registerDelegate(pi, delegate("normal", normal));
+    registerDelegate(pi, delegate("watcher", watcher, { watch: true }));
+    const roster = createDelegateRoster(pi);
+
+    const decision = await delegateDecision(pi, roster, request, ctx, {
+      timeoutMs: 1000,
+      watchOnly: true,
+    });
+
+    expect(normal).not.toHaveBeenCalled();
+    expect(watcher).toHaveBeenCalledOnce();
+    expect(decision?.verdict).toBe("block");
+    expect(appendEntry).toHaveBeenCalledWith(
+      DELEGATION_ENTRY_TYPE,
+      expect.objectContaining({ verdict: "block" }),
+    );
+  });
+
+  it("returns undefined when no delegate watches, and asks everyone otherwise", async () => {
+    const { pi } = fakePi();
+    const normal = vi.fn(() => ({ verdict: "allow" as const, reason: "n" }));
+    registerDelegate(pi, delegate("normal", normal));
+    const roster = createDelegateRoster(pi);
+
+    const none = await delegateDecision(pi, roster, request, ctx, {
+      timeoutMs: 1000,
+      watchOnly: true,
+    });
+    expect(none).toBeUndefined();
+    expect(normal).not.toHaveBeenCalled();
+
+    const all = await delegateDecision(pi, roster, request, ctx, {
+      timeoutMs: 1000,
+    });
+    expect(all?.verdict).toBe("allow");
+  });
+});

@@ -110,6 +110,25 @@ export interface DelegationConfig {
   timeoutMs?: number;
 }
 
+export type AwayMode = "off" | "auto" | "always";
+
+export interface AwayConfig {
+  /** "off": prompts wait for an answer (default). "auto": prompts wait promptTimeoutMs, then the user counts as away. "always": never prompt; the away rules always apply. */
+  mode?: AwayMode;
+  /** auto only: how long a prompt waits before the user counts as away, in milliseconds. Default 120000. */
+  promptTimeoutMs?: number;
+  /** While away, what happens to an action both reviewers are unsure about but rate low risk. "allow": run it and flag it for review. "defer": queue it. Default "allow". */
+  lowRisk?: "allow" | "defer";
+  /** After any block, how many following bash/powershell commands go to watch-capable delegates. 0 disables. Default 10. */
+  watchCommands?: number;
+  /** While away, blocks in a row with no progress between them before the run counts as stuck. Default 3. */
+  stuckBlocks?: number;
+  /** While away, blocks since the user left before the run pauses. Default 50. */
+  maxBlocks?: number;
+  /** Plain-language rules for what is fine while the user is away. Passed to delegates and advisors. */
+  standingPermissions?: string[];
+}
+
 export interface PromptsConfig {
   /** Quiet period in milliseconds before a prompt accepts an answer, so keys typed for the editor cannot approve or deny it. Any keypress restarts the period. 0 disables. Default: 1000. */
   inputGuardMs?: number;
@@ -164,6 +183,12 @@ export interface GuardrailsConfig {
     customPatterns?: DangerousPattern[];
     /** When true, prompt before running dangerous commands. When false, only warn. */
     requireConfirmation?: boolean;
+    /**
+     * When true, a command made only of `rm -rf` on known build or cache
+     * directories (node_modules, dist, build, ...) strictly inside the working
+     * directory is not flagged. Default false.
+     */
+    allowSafeCleanup?: boolean;
     /** Command patterns that bypass dangerous command prompts. */
     allowedPatterns?: PatternConfig[];
     /** Command patterns that are always blocked without prompting. */
@@ -171,6 +196,8 @@ export interface GuardrailsConfig {
   };
   /** Settings for the approval prompts. */
   prompts?: PromptsConfig;
+  /** Away mode: what happens to prompts when nobody is there to answer them. */
+  away?: AwayConfig;
 }
 
 export interface ResolvedConfig {
@@ -193,12 +220,14 @@ export interface ResolvedConfig {
   prompts: {
     inputGuardMs: number;
   };
+  away: Required<AwayConfig>;
   permissionGate: {
     patterns: DangerousPattern[];
     /** When true, use hardcoded structural matchers for built-in patterns.
      *  Set to false when customPatterns replaces the defaults. */
     useBuiltinMatchers: boolean;
     requireConfirmation: boolean;
+    allowSafeCleanup: boolean;
     allowedPatterns: PatternConfig[];
     autoDenyPatterns: PatternConfig[];
   };

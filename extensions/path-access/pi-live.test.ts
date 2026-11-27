@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createMock } from "@golevelup/ts-vitest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PiLiveRequest } from "../../src/shared/pi-live";
 import { pathPark } from "./pi-live";
 import { createPathAccessPromptComponent, promptOptions } from "./prompt";
@@ -121,5 +121,81 @@ describe("pathPark", () => {
     });
     park.dispose();
     expect(close).toHaveBeenCalledExactlyOnceWith({ by: "abort" });
+  });
+});
+
+describe("pathPark deadline", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function setupWithTimeout(timeoutMs?: number) {
+    const events = createMock<ExtensionAPI["events"]>();
+    const close = vi.fn();
+    let request!: PiLiveRequest;
+    events.emit.mockImplementation((name, data) => {
+      if (name === "pi-live:park") {
+        request = data as PiLiveRequest;
+        request.accept({ close });
+      }
+    });
+    const result = vi.fn();
+    const park = pathPark({
+      events,
+      id: "id",
+      toolCallId: "test-call",
+      toolName: "read",
+      path: "/outside/a",
+      displayPath: "/outside/a",
+      directory: "/outside",
+      cwd: "/workspace",
+      reason: "outside",
+      alwaysScope: "local",
+      showFileOptions: true,
+      dirGrantable: true,
+      alwaysEnabled: true,
+      timeoutMs,
+      card: timeoutMs ? { summary: "Reads a file" } : undefined,
+      component: createPathAccessPromptComponent(
+        "read",
+        "/outside/a",
+        "/outside",
+        "/workspace",
+        true,
+      ),
+    });
+    park.factory(
+      { terminal: { columns: 80 }, requestRender: vi.fn() },
+      { fg: (_c, s) => s, bg: (_c, s) => s, bold: (s) => s },
+      {},
+      result,
+    );
+    return { request, result, close, park };
+  }
+
+  it("has no expiresAt, card or timer without a timeout", () => {
+    const { request } = setupWithTimeout();
+    expect(request).not.toHaveProperty("expiresAt");
+    expect(request.view).not.toHaveProperty("card");
+  });
+
+  it("carries expiresAt and the card, and closes with by timeout", () => {
+    vi.useFakeTimers();
+    const { request, result, close, park } = setupWithTimeout(5000);
+    expect(request.expiresAt).toBe(Date.now() + 5000);
+    expect(request.view).toMatchObject({ card: { summary: "Reads a file" } });
+    vi.advanceTimersByTime(5000);
+    expect(result).toHaveBeenCalledWith("timeout");
+    park.dispose();
+    expect(close).toHaveBeenCalledExactlyOnceWith({ by: "timeout" });
+    expect(park.closedBy()).toBe("timeout");
+  });
+
+  it("clears the timer on dispose", () => {
+    vi.useFakeTimers();
+    const { result, park } = setupWithTimeout(5000);
+    park.dispose();
+    vi.advanceTimersByTime(5000);
+    expect(result).not.toHaveBeenCalled();
   });
 });

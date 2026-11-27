@@ -146,6 +146,10 @@
               "type": "boolean",
               "description": "When true, prompt before running dangerous commands. When false, only warn."
             },
+            "allowSafeCleanup": {
+              "type": "boolean",
+              "description": "When true, a command made only of `rm -rf` on known build or cache directories (node_modules, dist, build, ...) strictly inside the working directory is not flagged. Default false."
+            },
             "allowedPatterns": {
               "type": "array",
               "items": {
@@ -167,6 +171,10 @@
         "prompts": {
           "$ref": "#/definitions/PromptsConfig",
           "description": "Settings for the approval prompts."
+        },
+        "away": {
+          "$ref": "#/definitions/AwayConfig",
+          "description": "Away mode: what happens to prompts when nobody is there to answer them."
         }
       },
       "additionalProperties": false
@@ -393,6 +401,55 @@
         }
       },
       "additionalProperties": false
+    },
+    "AwayConfig": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "$ref": "#/definitions/AwayMode",
+          "description": "\"off\": prompts wait for an answer (default). \"auto\": prompts wait promptTimeoutMs, then the user counts as away. \"always\": never prompt; the away rules always apply."
+        },
+        "promptTimeoutMs": {
+          "type": "number",
+          "description": "auto only: how long a prompt waits before the user counts as away, in milliseconds. Default 120000."
+        },
+        "lowRisk": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "defer"
+          ],
+          "description": "While away, what happens to an action both reviewers are unsure about but rate low risk. \"allow\": run it and flag it for review. \"defer\": queue it. Default \"allow\"."
+        },
+        "watchCommands": {
+          "type": "number",
+          "description": "After any block, how many following bash/powershell commands go to watch-capable delegates. 0 disables. Default 10."
+        },
+        "stuckBlocks": {
+          "type": "number",
+          "description": "While away, blocks in a row with no progress between them before the run counts as stuck. Default 3."
+        },
+        "maxBlocks": {
+          "type": "number",
+          "description": "While away, blocks since the user left before the run pauses. Default 50."
+        },
+        "standingPermissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Plain-language rules for what is fine while the user is away. Passed to delegates and advisors."
+        }
+      },
+      "additionalProperties": false
+    },
+    "AwayMode": {
+      "type": "string",
+      "enum": [
+        "off",
+        "auto",
+        "always"
+      ]
     }
   }
 }

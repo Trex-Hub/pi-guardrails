@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { GuardrailsCard } from "../../src/core/delegation";
 import type { PathAccessAlwaysScope } from "../../src/shared/config/types";
 import { parkPrompt } from "../../src/shared/pi-live";
 import {
@@ -29,10 +30,16 @@ export function pathPark(params: {
   dirGrantable: boolean;
   alwaysEnabled: boolean;
   signal?: AbortSignal;
+  /** Away mode: close the prompt with `{ by: "timeout" }` after this many ms. */
+  timeoutMs?: number;
+  card?: GuardrailsCard;
   component: ReturnType<typeof createPathAccessPromptComponent>;
 }) {
-  let park: ReturnType<typeof parkPrompt<PromptResult>> | undefined;
+  let park: ReturnType<typeof parkPrompt<PromptResult | "timeout">> | undefined;
   let removeAbort: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiresAt =
+    params.timeoutMs !== undefined ? Date.now() + params.timeoutMs : undefined;
   const options = promptOptions(
     params.showFileOptions,
     params.dirGrantable,
@@ -45,7 +52,7 @@ export function pathPark(params: {
       : {}),
   }));
   const factory: typeof params.component = (tui, theme, kb, onResult) => {
-    park = parkPrompt({
+    park = parkPrompt<PromptResult | "timeout">({
       events: params.events,
       id: params.id,
       kind: "guardrails.path",
@@ -63,13 +70,21 @@ export function pathPark(params: {
         target: params.showFileOptions ? "file" : "directory",
         ...(params.command !== undefined ? { command: params.command } : {}),
         reason: params.reason,
+        ...(params.card ? { card: params.card } : {}),
         alwaysSavedTo: SAVED_TO[params.alwaysScope],
         options,
       },
       options,
+      expiresAt,
       onResult,
     });
     const currentPark = park;
+    if (params.timeoutMs !== undefined) {
+      timer = setTimeout(
+        () => currentPark.timeout("timeout"),
+        params.timeoutMs,
+      );
+    }
     const abort = () => {
       currentPark.abort("deny");
     };
@@ -84,7 +99,10 @@ export function pathPark(params: {
   };
   return {
     factory,
+    /** How the prompt closed, once the custom prompt has been shown. */
+    closedBy: () => park?.closedBy(),
     dispose: () => {
+      if (timer) clearTimeout(timer);
       removeAbort?.();
       park?.dispose();
     },

@@ -114,4 +114,43 @@ describe("parkPrompt", () => {
     park.dispose();
     expect(close2).toHaveBeenCalledExactlyOnceWith({ by: "error" });
   });
+  it("puts expiresAt on the request only when set", () => {
+    expect(setup().request).not.toHaveProperty("expiresAt");
+    let request!: PiLiveRequest;
+    parkPrompt({
+      events: {
+        emit: (_event, data) => {
+          request = data;
+        },
+      },
+      id: "1",
+      kind: "guardrails.command",
+      title: "test",
+      view: {},
+      expiresAt: 1234,
+      options: [],
+      onResult: () => {},
+    });
+    expect(request.expiresAt).toBe(1234);
+  });
+  it("closes with by timeout and delivers the internal result", () => {
+    const { park, onResult, close } = setup();
+    park.timeout("allow");
+    park.dispose();
+    expect(onResult).toHaveBeenCalledWith("allow");
+    expect(close).toHaveBeenCalledExactlyOnceWith({ by: "timeout" });
+    expect(park.closedBy()).toBe("timeout");
+  });
+  it("closes with by shutdown without delivering a result", () => {
+    const { park, onResult, close } = setup();
+    park.dispose("shutdown");
+    expect(onResult).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledExactlyOnceWith({ by: "shutdown" });
+  });
+  it("exposes the client that answered", () => {
+    const { park, request } = setup();
+    const client = { connId: "c1", name: "phone" };
+    request.answer({ result: "allow" }, client);
+    expect(park.outcome()).toEqual({ by: "client", client });
+  });
 });

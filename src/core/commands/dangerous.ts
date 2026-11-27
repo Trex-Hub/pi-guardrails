@@ -405,6 +405,121 @@ function matchBuiltinDangerous(
   return undefined;
 }
 
+const NEVER_LOW_RISK_MATCHERS: readonly StructuralMatcher[] = [
+  sudoMatcher,
+  doasMatcher,
+  pkexecMatcher,
+  ddMatcher,
+  mkfsMatcher,
+  wipefsMatcher,
+  blkdiscardMatcher,
+  fdiskMatcher,
+  partedMatcher,
+  containerMatcher,
+  shredMatcher,
+];
+
+const NEVER_LOW_RISK_COMMANDS = new Set([
+  "sudo",
+  "doas",
+  "pkexec",
+  "dd",
+  "wipefs",
+  "blkdiscard",
+  "fdisk",
+  "sfdisk",
+  "parted",
+  "sgdisk",
+  "shred",
+  "docker",
+  "podman",
+]);
+
+const SHELLS = new Set(["sh", "bash", "zsh", "dash"]);
+
+/** Nested `sh -c` / `eval` strings are parsed up to this depth. */
+const MAX_NEVER_LOW_RISK_DEPTH = 3;
+
+function basename(word: string): string {
+  const i = word.lastIndexOf("/");
+  return i === -1 ? word : word.slice(i + 1);
+}
+
+function isNeverLowRiskCommandName(name: string): boolean {
+  return NEVER_LOW_RISK_COMMANDS.has(name) || name.startsWith("mkfs");
+}
+
+/** Script strings handed to a shell (`-c`) or `eval` by the word at `i`. */
+function nestedScript(words: string[], i: number): string | undefined {
+  const name = basename(words[i] ?? "");
+  if (name === "eval") return words.slice(i + 1).join(" ");
+  if (!SHELLS.has(name)) return undefined;
+  for (let j = i + 1; j < words.length; j++) {
+    const w = words[j] ?? "";
+    if (w.startsWith("-") && !w.startsWith("--") && w.includes("c")) {
+      return words[j + 1];
+    }
+  }
+  return undefined;
+}
+
+function neverLowRisk(command: string, depth: number): boolean {
+  if (depth > MAX_NEVER_LOW_RISK_DEPTH) return true;
+  let ast: Program;
+  try {
+    const result = parse(command, { recoverErrors: true });
+    if ((result.errors?.length ?? 0) > 0) return true;
+    ast = result.ast;
+  } catch {
+    return true;
+  }
+
+  let found = false;
+  walkCommands(
+    ast,
+    (cmd) => {
+      if (!cmd) return false;
+      const words = (cmd.words ?? []).map(wordToString);
+      for (let i = 0; i < words.length; i++) {
+        const name = basename(words[i] ?? "");
+        if (isNeverLowRiskCommandName(name)) {
+          const suffix = [name, ...words.slice(i + 1)];
+          if (NEVER_LOW_RISK_MATCHERS.some((matcher) => matcher(suffix))) {
+            found = true;
+            return true;
+          }
+        }
+        const script = nestedScript(words, i);
+        if (script !== undefined && neverLowRisk(script, depth + 1)) {
+          found = true;
+          return true;
+        }
+      }
+      return false;
+    },
+    { includeSubstitutions: true },
+  );
+  return found;
+}
+
+/**
+ * True when any simple command in `command` (pipelines, lists, subshells and
+ * substitutions included) matches a matcher whose commands can never count as
+ * low risk: admin rights, disk and filesystem operations, risky container runs
+ * and secure overwrite. Unparseable input returns true. `rm`, `chmod` and
+ * `chown` are deliberately not on the list.
+ *
+ * Wrappers are seen through: every position in a command whose basename is one
+ * of those commands is matched as if it started the command (`env X=1 sudo`,
+ * `xargs sudo`, `/usr/bin/sudo`, ...), and the string argument of
+ * `sh|bash|zsh|dash -c` and `eval` is parsed again (depth 3; deeper or
+ * unparseable returns true). This over-matches (`echo sudo` is true); that is
+ * acceptable because the result can only defer an action, never allow one.
+ */
+export function hasNeverLowRiskCommand(command: string): boolean {
+  return neverLowRisk(command, 0);
+}
+
 export function checkDangerousCommand({
   command,
   patterns,

@@ -6,10 +6,33 @@ export const DELEGATE_VERDICTS: readonly DelegateVerdict[] = [
   "ask",
 ];
 
+export type Risk = "low" | "high";
+
+export interface GuardrailsCard {
+  /** What it wants to do, in one or two plain sentences. */
+  summary: string;
+  /** Why it was stopped, in plain words. */
+  why?: string;
+  /** Each part of the command and what it means. */
+  steps?: { part: string; meaning: string }[];
+  /** Low or higher risk, and why. */
+  risk?: string;
+  /** One thing worth learning from this item. */
+  worthKnowing?: string;
+  /** Short label grouping similar actions, e.g. "delete build output". Used for standing-permission suggestions. */
+  category?: string;
+}
+
 export interface DelegateAnswer {
   verdict: DelegateVerdict;
   reason: string;
   details?: unknown;
+  /** Risk of the action. Only `"low"` can let an unsure action run while the user is away. */
+  risk?: Risk;
+  /** Only read on verdict "block": high impact and clearly outside the user's request. */
+  severe?: boolean;
+  /** Plain-language explanation of the action. */
+  card?: GuardrailsCard;
 }
 
 export type DelegateStatus =
@@ -42,6 +65,45 @@ export function isDelegateAnswer(value: unknown): value is DelegateAnswer {
     (DELEGATE_VERDICTS as readonly string[]).includes(answer.verdict) &&
     typeof answer.reason === "string"
   );
+}
+
+function sanitizeCard(value: unknown): GuardrailsCard | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.summary !== "string" || raw.summary.trim() === "") {
+    return undefined;
+  }
+  const card: GuardrailsCard = { summary: raw.summary };
+  for (const key of ["why", "risk", "worthKnowing", "category"] as const) {
+    const field = raw[key];
+    if (typeof field === "string") card[key] = field;
+  }
+  if (Array.isArray(raw.steps)) {
+    const steps = raw.steps.flatMap((step) => {
+      if (!step || typeof step !== "object") return [];
+      const { part, meaning } = step as Record<string, unknown>;
+      return typeof part === "string" && typeof meaning === "string"
+        ? [{ part, meaning }]
+        : [];
+    });
+    card.steps = steps;
+  }
+  return card;
+}
+
+/**
+ * Drops invalid optional extras (`risk`, `severe`, `card`) from an answer
+ * without affecting its validity. Returns a new object; the input is not
+ * mutated.
+ */
+export function sanitizeAnswerExtras(answer: DelegateAnswer): DelegateAnswer {
+  const { risk, severe, card, ...rest } = answer;
+  const clean: DelegateAnswer = { ...rest };
+  if (risk === "low" || risk === "high") clean.risk = risk;
+  if (severe === true) clean.severe = true;
+  const cleanCard = sanitizeCard(card);
+  if (cleanCard) clean.card = cleanCard;
+  return clean;
 }
 
 function describeNonAnswer(outcome: DelegateOutcome): string {

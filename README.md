@@ -7,12 +7,13 @@
 
 Guardrails adds safety checks to Pi so agents are less likely to read secrets, write protected files, access paths outside the workspace, or run dangerous shell commands by accident.
 
-The package installs four Pi extensions:
+The package installs five Pi extensions:
 
 - **guardrails** — file protection policies, settings, onboarding, and examples.
 - **path-access** — controlling access outside the current workspace.
 - **permission-gate** — confirming or blocking risky shell commands.
 - **herdr** — reporting Guardrails approval prompts to Herdr.
+- **away** — optional away mode: what happens to prompts when nobody is there to answer them.
 
 ## Install
 
@@ -60,6 +61,33 @@ Approval prompts also report `blocked` program status (OSC 7501) natively throug
 
 Answer interactive prompts from other apps with [pi-live](docs/pi-live.md).
 
+### away
+
+Away mode is opt-in. With `away.mode` unset or `"off"`, Guardrails behaves exactly as before: a prompt waits until someone answers it. For long or overnight runs, turn it on so every decision ends in a set time instead of waiting forever. Add this to your Guardrails settings file:
+
+```json
+{ "away": { "mode": "auto" }, "delegation": { "timeoutMs": 120000 } }
+```
+
+Modes:
+
+- `off` (default): today's behavior.
+- `auto`: a prompt waits `away.promptTimeoutMs` (2 minutes), then you count as away. Typing or pressing a key brings you back. Print and JSON runs count as away.
+- `always`: never prompts; the away rules always apply. For a server.
+
+While you are away, a flagged action that your delegates can't settle is either run and logged (when a delegate rates it low risk and `away.lowRisk` is `"allow"`) or queued for you and not run. The agent is told it was queued, so it moves on instead of working around it. Clearly harmful actions are blocked and end the turn. Repeats, stuck runs and too many blocks are handled too, and a paused run resumes when you return. A high-risk action that a delegate allows while you are away also runs, and is listed under "allowed while you were away" for review. Without a delegate that reports risk, everything unsettled is queued. See [decision delegation](docs/decision-delegation.md) for how delegates and advisors plug in.
+
+Commands:
+
+- `/guardrails:inbox`: review what was queued or allowed while you were away, across every Pi session on the machine. Approve once, always allow, reject, or mark an allowed action fine or not. Each agent picks up its decisions, even if it was closed in the meantime.
+- `/guardrails:away` (`auto` only): count as away now, without waiting for a prompt to time out.
+
+`permissionGate.allowSafeCleanup` (default `false`) stops `rm -rf` of known build and cache folders strictly inside the working directory (`node_modules`, `dist`, `build`, ...) from being flagged. It is conservative: anything else in the command, any glob, variable, `..` or path outside the project keeps it flagged.
+
+Standing permissions (`away.standingPermissions`) are plain-language rules, such as "delete anything inside the project folder", passed to your delegates. `/guardrails:inbox` suggests one after you approve the same kind of action five times.
+
+Away mode is not a sandbox. See [docs/away-mode.md](docs/away-mode.md) for the full design.
+
 ## Decision delegation
 
 Before permission-gate or path-access prompts you, other extensions can decide for you. If every registered delegate allows the action, it runs without a prompt; if any blocks it, it is blocked; anything else, including a timeout, falls back to the usual prompt. Each decision shows up under the tool call as a `[guardrails]` line.
@@ -70,7 +98,7 @@ See [docs/decision-delegation.md](docs/decision-delegation.md) for the rules and
 
 Guardrails emits paired events on Pi's shared event bus: `guardrails:prompt:opened` when an interactive prompt starts waiting for input and `guardrails:prompt:closed` when it stops. Both carry the same `prompt.id` for correlation.
 
-Decision delegation events are listed in [docs/decision-delegation.md](docs/decision-delegation.md#events).
+Decision delegation events are listed in [docs/decision-delegation.md](docs/decision-delegation.md#events). Away mode adds `guardrails:presence:changed`, `guardrails:away:item`, `guardrails:away:paused` and `guardrails:tripwire`, described in [docs/away-mode.md](docs/away-mode.md#events).
 
 ## Configuration
 

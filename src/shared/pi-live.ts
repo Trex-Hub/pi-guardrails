@@ -36,9 +36,11 @@ interface ParkOption<T extends string> {
 export function parkPrompt<T extends string>(params: {
   events: { emit(event: string, data: PiLiveRequest): void };
   id: string;
-  kind: "guardrails.command" | "guardrails.path";
+  kind: "guardrails.command" | "guardrails.path" | "guardrails.inbox";
   title: string;
   view: unknown;
+  /** Epoch ms after which the prompt closes by itself. Lets clients show a countdown. */
+  expiresAt?: number;
   options: readonly ParkOption<T>[];
   onResult(result: T): void;
 }) {
@@ -59,7 +61,7 @@ export function parkPrompt<T extends string>(params: {
     }
     return true;
   };
-  const dispose = (by?: "abort" | "error") => {
+  const dispose = (by?: "abort" | "error" | "shutdown") => {
     if (disposed) return;
     disposed = true;
     if (open && by) outcome = { by };
@@ -74,6 +76,9 @@ export function parkPrompt<T extends string>(params: {
       kind: params.kind,
       title: params.title,
       view: params.view,
+      ...(params.expiresAt !== undefined
+        ? { expiresAt: params.expiresAt }
+        : {}),
       answer(raw, from) {
         if (!open) return { status: "invalid", reason: "not open" };
         if (
@@ -115,6 +120,12 @@ export function parkPrompt<T extends string>(params: {
   return {
     keyboard: (result: T) => finish(result, { by: "keyboard" }),
     abort: (result: T) => finish(result, { by: "abort" }),
+    /** Closes the ticket with `{ by: "timeout" }`. `result` is internal and never offered to clients. */
+    timeout: (result: T) => finish(result, { by: "timeout" }),
+    /** How the prompt closed (or will close). */
+    closedBy: () => outcome.by,
+    /** How the prompt closed, with the client that answered if there was one. */
+    outcome: () => outcome,
     dispose,
   };
 }

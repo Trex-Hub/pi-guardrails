@@ -20,7 +20,7 @@ export async function saveCommandSessionGrant(command: string): Promise<void> {
   });
 }
 
-function exactCommandPattern(command: string): string {
+export function exactCommandPattern(command: string): string {
   const escaped = command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return `^(?:${escaped})(?![\\s\\S])`;
 }

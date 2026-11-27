@@ -4,6 +4,7 @@ import {
   isToolCallEventType,
 } from "@earendil-works/pi-coding-agent";
 import { checkAction } from "../../src/core";
+import { lazyAdvisors } from "../../src/shared/away/advisor";
 import { configLoader } from "../../src/shared/config";
 import {
   createDelegateRoster,
@@ -22,6 +23,7 @@ import {
   GUARDRAILS_PROMPT_OPENED_EVENT,
   setupLegacyPromptEventAlias,
 } from "../../src/shared/events";
+import { handleAwayToolCall } from "./away";
 import { isCommandAllowed, saveCommandSessionGrant } from "./grants";
 import { COMMAND_OPTIONS, commandPark } from "./pi-live";
 import {
@@ -29,6 +31,7 @@ import {
   formatAutoDenyReason,
   matchCommandPattern,
 } from "./rules";
+import { isExemptSafeCleanup } from "./safe-cleanup";
 
 type ConfirmResult = "allow" | "allow-session" | "deny" | "stop";
 
@@ -45,6 +48,7 @@ export default async function permissionGate(pi: ExtensionAPI) {
   setupLegacyPromptEventAlias(pi, "permissionGate");
   registerDecisionEntryRenderer(pi);
   const delegates = createDelegateRoster(pi);
+  const advisors = lazyAdvisors(pi);
 
   pi.on("tool_call", async (event, ctx) => {
     const config = configLoader.getConfig();
@@ -54,6 +58,20 @@ export default async function permissionGate(pi: ExtensionAPI) {
       !isToolCallEventType("powershell", event)
     )
       return;
+
+    if (config.away && config.away.mode !== "off") {
+      return handleAwayToolCall(
+        { pi, delegates, advisors },
+        {
+          toolName: event.toolName,
+          toolCallId: event.toolCallId,
+          parentToolCallId: event.parentToolCallId,
+          input: event.input,
+        },
+        ctx,
+        config,
+      );
+    }
 
     const command = event.input.command;
     const toolName = event.toolName;
@@ -89,7 +107,11 @@ export default async function permissionGate(pi: ExtensionAPI) {
         useBuiltinMatchers: config.permissionGate.useBuiltinMatchers,
       }),
     ]);
-    if (safety.kind === "safe") return;
+    if (
+      safety.kind === "safe" ||
+      isExemptSafeCleanup(config.permissionGate, command, ctx.cwd)
+    )
+      return;
 
     emitRiskDetected(pi, {
       feature: "permissionGate",

@@ -1,3 +1,4 @@
+export * from "./away";
 export { checkAction, resolveDecision } from "./check";
 export * from "./commands";
 export * from "./delegation";

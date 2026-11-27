@@ -7,6 +7,7 @@ import {
   combineDelegateOutcomes,
   type DelegateOutcome,
   isDelegateAnswer,
+  sanitizeAnswerExtras,
 } from "../../core/delegation";
 import { GUARDRAILS_DECISION_DELEGATED_EVENT } from "../events";
 import { delegationBoard } from "./board";
@@ -104,7 +105,7 @@ export async function runDelegates(
       return {
         ...base,
         status: "answered",
-        answer: result,
+        answer: sanitizeAnswerExtras(result),
         elapsedMs: elapsed(),
       };
     } catch (error) {
@@ -141,9 +142,15 @@ export async function delegateDecision(
   roster: DelegateRoster,
   request: DelegationRequest,
   ctx: DelegationCtx,
-  options: { timeoutMs: number },
+  options: {
+    timeoutMs: number;
+    /** Only ask delegates that opted in with `watch: true`. */
+    watchOnly?: boolean;
+  },
 ): Promise<DelegatedDecision | undefined> {
-  const delegates = roster.list();
+  const delegates = options.watchOnly
+    ? roster.list().filter((delegate) => delegate.watch === true)
+    : roster.list();
   if (delegates.length === 0) return undefined;
 
   const startedAt = performance.now();

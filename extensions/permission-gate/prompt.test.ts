@@ -145,4 +145,56 @@ describe("createPermissionGateConfirmComponent", () => {
       expect(result()).toBeUndefined();
     });
   });
+  describe("away extras", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function render(
+      extra: Parameters<typeof createPermissionGateConfirmComponent>[3],
+    ) {
+      const component = createPermissionGateConfirmComponent(
+        "rm -rf build",
+        "recursive delete",
+        0,
+        extra,
+      )(
+        { terminal: { rows: 40, columns: 80 }, requestRender: vi.fn() },
+        NOOP_THEME,
+        {},
+        () => {},
+      );
+      const rendered = component.render(80);
+      return {
+        component,
+        text: Array.isArray(rendered) ? rendered.join("\n") : String(rendered),
+      };
+    }
+
+    it("shows the time left and ticks down", () => {
+      vi.useFakeTimers();
+      const { component, text } = render({ expiresAt: Date.now() + 90_000 });
+      expect(text).toContain("1:30 left");
+      vi.advanceTimersByTime(31_000);
+      const next = component.render(80);
+      expect(String(Array.isArray(next) ? next.join("\n") : next)).toContain(
+        "0:59 left",
+      );
+      component.dispose?.();
+    });
+
+    it("shows nothing extra without extras", () => {
+      const { text } = render(undefined);
+      expect(text).not.toContain("left");
+      expect(text).not.toContain("What it wants to do");
+    });
+
+    it("shows the card under the command", () => {
+      const { text } = render({
+        card: { summary: "Deletes the build folder", risk: "Low" },
+      });
+      expect(text).toContain("What it wants to do");
+      expect(text).toContain("Deletes the build folder");
+    });
+  });
 });

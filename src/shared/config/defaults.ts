@@ -16,6 +16,15 @@ export const DEFAULT_CONFIG: ResolvedConfig = {
   prompts: {
     inputGuardMs: 1000,
   },
+  away: {
+    mode: "off",
+    promptTimeoutMs: 120000,
+    lowRisk: "allow",
+    watchCommands: 10,
+    stuckBlocks: 3,
+    maxBlocks: 50,
+    standingPermissions: [],
+  },
   pathAccess: {
     mode: "ask",
     applyTo: "all",
@@ -120,6 +129,7 @@ export const DEFAULT_CONFIG: ResolvedConfig = {
     ],
     useBuiltinMatchers: true,
     requireConfirmation: true,
+    allowSafeCleanup: false,
     allowedPatterns: [],
     autoDenyPatterns: [],
   },

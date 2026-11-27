@@ -478,7 +478,8 @@ describe("delegation resolution", () => {
   it.each([
     [-1, 10000],
     ["fast", 10000],
-    [120000, 60000],
+    [400000, 300000],
+    [120000, 120000],
     [2500, 2500],
   ])("bounds delegation.timeoutMs %j to %j", async (timeoutMs, expected) => {
     const config = await load(`/tmp/pi-agent-delegation-timeout-${expected}`, {
@@ -527,5 +528,41 @@ describe("prompts resolution", () => {
       prompts: { inputGuardMs },
     });
     expect(config.prompts.inputGuardMs).toBe(expected);
+  });
+});
+
+describe("permissionGate.allowSafeCleanup resolution", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vol.reset();
+  });
+
+  async function load(dir: string, config?: Record<string, unknown>) {
+    vi.stubEnv("PI_CODING_AGENT_DIR", dir);
+    vol.fromJSON(
+      config
+        ? {
+            [`${dir}/extensions/guardrails.json`]: JSON.stringify({
+              version: pkg.version,
+              ...config,
+            }),
+          }
+        : { [`${dir}/.keep`]: "" },
+    );
+    const configLoader = createGuardrailsConfigLoader();
+    await configLoader.load();
+    return configLoader.getConfig();
+  }
+
+  it("defaults to false", async () => {
+    const config = await load("/tmp/pi-agent-safe-cleanup-default");
+    expect(config.permissionGate.allowSafeCleanup).toBe(false);
+  });
+
+  it("can be switched on", async () => {
+    const config = await load("/tmp/pi-agent-safe-cleanup-on", {
+      permissionGate: { allowSafeCleanup: true },
+    });
+    expect(config.permissionGate.allowSafeCleanup).toBe(true);
   });
 });

@@ -11,5 +11,8 @@ export {
   checkDangerousCommand,
   compileCommandPattern,
   compileCommandPatterns,
+  hasNeverLowRiskCommand,
   matchDangerousCommand,
 } from "./dangerous";
+export type { SafeCleanupOptions } from "./safe-cleanup";
+export { isSafeCleanup } from "./safe-cleanup";

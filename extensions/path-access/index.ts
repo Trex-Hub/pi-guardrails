@@ -8,6 +8,7 @@ import {
   normalizeForDisplay,
   type PathAccessState,
 } from "../../src/core/paths";
+import { lazyAdvisors } from "../../src/shared/away/advisor";
 import { configLoader } from "../../src/shared/config";
 import {
   createDelegateRoster,
@@ -25,6 +26,7 @@ import {
   GUARDRAILS_PROMPT_OPENED_EVENT,
   setupLegacyPromptEventAlias,
 } from "../../src/shared/events";
+import { handleAwayToolCall } from "./away";
 import { piDocumentationPaths } from "./dynamic-resources";
 import {
   createPendingGrant,
@@ -75,9 +77,36 @@ export default async function pathAccess(pi: ExtensionAPI) {
   setupLegacyPromptEventAlias(pi, "pathAccess");
   registerDecisionEntryRenderer(pi);
   const delegates = createDelegateRoster(pi);
+  const advisors = lazyAdvisors(pi);
 
   pi.on("tool_call", async (event, ctx) => {
     const config = configLoader.getConfig();
+    if (
+      config.enabled &&
+      config.features.pathAccess &&
+      config.away &&
+      config.away.mode !== "off"
+    ) {
+      return handleAwayToolCall(
+        {
+          pi,
+          delegates,
+          advisors,
+          extraAllowedPaths: () => [
+            ...piDocsPaths,
+            ...currentSkillAllowedPaths,
+          ],
+        },
+        {
+          toolName: event.toolName,
+          toolCallId: event.toolCallId,
+          parentToolCallId: event.parentToolCallId,
+          input: event.input as Record<string, unknown>,
+        },
+        ctx,
+        config,
+      );
+    }
     if (
       !config.enabled ||
       !config.features.pathAccess ||
