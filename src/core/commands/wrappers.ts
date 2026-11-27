@@ -210,7 +210,13 @@ const WRAPPERS: Record<string, Resolver> = {
 
 /** What `words` (one simple command, head not yet normalized) hands over to. */
 export function resolveWrapped(words: string[]): Wrapped[] {
-  const head = basename(words[0] ?? "");
+  const first = words[0] ?? "";
+  // The parser's `time -p CMD` clause leaves `-p` as the first word of CMD's
+  // simple command: resolve it like the `time` wrapper (no command starts with `-`).
+  if (first.startsWith("-") && first !== "-") {
+    return resolveWrapped(["time", ...words]);
+  }
+  const head = basename(first);
   const resolver = Object.hasOwn(WRAPPERS, head) ? WRAPPERS[head] : undefined;
   return resolver ? resolver([head, ...words.slice(1)]) : [];
 }
