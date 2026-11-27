@@ -25,6 +25,9 @@ describe("away messages", () => {
     expect(m.paused("because")).toBe(
       "Guardrails paused this run: because. Stop here and summarize what you did and what is waiting for the user's approval.",
     );
+    expect(m.paused("cannot be undone.")).toBe(m.paused("cannot be undone"));
+    expect(m.paused("it is risky... \n")).toBe(m.paused("it is risky"));
+    expect(m.paused("because")).not.toContain("..");
     expect(m.approved("ls")).toBe(
       "Guardrails: the user approved this action. You can run it now: ls",
     );

@@ -16,7 +16,7 @@ export const PAUSED_HOLD =
 
 export const advice = (message: string): string => `Supervisor: ${message}`;
 export const paused = (why: string): string =>
-  `Guardrails paused this run: ${why}. Stop here and summarize what you did and what is waiting for the user's approval.`;
+  `Guardrails paused this run: ${why.replace(/[.\s]+$/, "")}. Stop here and summarize what you did and what is waiting for the user's approval.`;
 export const approved = (label: string): string =>
   `Guardrails: the user approved this action. You can run it now: ${label}`;
 export const rejected = (label: string): string =>
